@@ -34,12 +34,12 @@ Every file states both pin-order conventions, since OpenOCD's jtag_nums
 the same wires in different orders.
 ---
  tcl/board/netv2-rpi-bcm2835gpio.cfg | 78 +++++++++++++++++++++++++++++
- tcl/board/netv2-rpi-linuxgpiod.cfg  | 39 +++++++++++++++
+ tcl/board/netv2-rpi-linuxgpiod.cfg  | 40 +++++++++++++++
  tcl/board/netv2-rpi-rp1pio.cfg      | 25 +++++++++
  tcl/board/netv2-rpi-spiflash.cfg    | 24 +++++++++
  tcl/board/netv2-rpi.cfg             | 29 +++++++++++
  tcl/fpga/lattice-ecp5-traceid.cfg   | 35 +++++++++++++
- 6 files changed, 230 insertions(+)
+ 6 files changed, 231 insertions(+)
  create mode 100644 tcl/board/netv2-rpi-bcm2835gpio.cfg
  create mode 100644 tcl/board/netv2-rpi-linuxgpiod.cfg
  create mode 100644 tcl/board/netv2-rpi-rp1pio.cfg
@@ -133,10 +133,10 @@ index 0000000..1a1cbd2
 +source [find fpga/xlnx/xc7.cfg]
 diff --git a/tcl/board/netv2-rpi-linuxgpiod.cfg b/tcl/board/netv2-rpi-linuxgpiod.cfg
 new file mode 100644
-index 0000000..293465b
+index 0000000..5193023
 --- /dev/null
 +++ b/tcl/board/netv2-rpi-linuxgpiod.cfg
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,40 @@
 +# SPDX-License-Identifier: GPL-2.0-or-later
 +
 +# Kosagi NeTV2 (Xilinx Artix-7 XC7A35T or XC7A100T, FGG484) programmed over
@@ -155,9 +155,10 @@ index 0000000..293465b
 +# --pins take TDI:TDO:TCK:TMS (27:22:4:17) for the same wires.
 +#
 +# The header GPIOs are chip 0 on a Pi 1-4. On a Pi 5 they belong to the RP1,
-+# which the kernel may register under another number (gpiochip15 on the
-+# 6.12 Raspberry Pi kernel; `gpiodetect` lists it as pinctrl-rp1). Set
-+# NETV2_GPIOCHIP before sourcing this file to override:
++# whose chip number depends on the kernel: some 6.12 Raspberry Pi kernels
++# register it as gpiochip15, later ones as gpiochip0. Check with
++# `gpiodetect` (the RP1 is the chip labelled pinctrl-rp1) and set
++# NETV2_GPIOCHIP before sourcing this file when it is not 0:
 +#
 +#   openocd -c 'set NETV2_GPIOCHIP 15' -f board/netv2-rpi-linuxgpiod.cfg
 +

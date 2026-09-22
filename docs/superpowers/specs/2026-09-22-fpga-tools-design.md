@@ -280,7 +280,8 @@ Assets, uploaded (main only, after every matrix job succeeded) to the
 current series release (`vX.Y` prerelease, created if missing, the
 fpgas.online-tt pattern):
 
-- `openFPGALoader-<version>-linux-<arch>` (single static executable) + `.sha256`
+- `openFPGALoader-<version>-linux-<arch>.tar.gz` (static executable plus
+  `share/openFPGALoader/` bridge bitstreams and a README) + `.sha256`
 - `openocd-<version>-linux-<arch>.tar.gz` containing `bin/openocd` and
   `share/openocd/scripts/` (OpenOCD is useless without its Tcl tree; run with
   `OPENOCD_SCRIPTS=<dir>/share/openocd/scripts`) + `.sha256`
@@ -380,9 +381,13 @@ are unit-tested; git-touching code is exercised by CI's apply step.
 releases and fails closed on any shape change. These are therefore a
 contract, changed only with notice to that repo:
 
-- asset name `openFPGALoader-<version>-linux-<arch>` with `<arch>` in
-  `arm64`, `armv7`, `armv6`; a `<asset>.sha256` beside it in `sha256sum`
-  format (`<hex>  <filename>`);
+- asset name `openFPGALoader-<version>-linux-<arch>.tar.gz` with `<arch>` in
+  `arm64`, `armv7`, `armv6`, containing `<name>/bin/openFPGALoader`,
+  `<name>/share/openFPGALoader/*.gz` (bridge bitstreams; upstream's binary
+  needs them for any flash access and honours `OPENFPGALOADER_SOJ_DIR`) and
+  `<name>/README.txt`; a `<asset>.sha256` beside it in `sha256sum` format
+  (`<hex>  <filename>`). It was a bare executable until rpi-hwid measured
+  on 2026-09-22 that flash reads fail without the data directory;
 - `latest.json` on the series release:
   `{"series": "vX.Y", "latest": {track: {tool: {arch: {"asset", "version"}}}}}`;
 - every fpgas.online build's version contains `+fpgasonline.` and prints as

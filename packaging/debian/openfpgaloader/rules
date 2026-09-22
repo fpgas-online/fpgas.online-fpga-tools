@@ -33,6 +33,11 @@ override_dh_auto_install:
 	dh_auto_install
 	install -D -m 0644 99-openfpgaloader.rules \
 		debian/@PACKAGE@/usr/lib/udev/rules.d/99-openfpgaloader.rules
+	# Every SPI-flash access on a JTAG-attached FPGA loads a bridge bitstream
+	# from /usr/share/openFPGALoader; a package without them cannot read a
+	# flash id, let alone --flash-info.
+	test -f debian/@PACKAGE@/usr/share/openFPGALoader/spiOverJtag_xc7a100tfgg484.bit.gz \
+		|| { echo "ERROR: spiOverJtag bridges not installed" >&2; exit 1; }
 	set -e; bin=debian/@PACKAGE@/usr/bin/openFPGALoader; \
 	$$bin --list-cables > debian/cables.txt; \
 	for cable in rp1pio libgpiod tt_micropython; do \

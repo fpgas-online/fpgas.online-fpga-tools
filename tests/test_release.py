@@ -7,8 +7,8 @@ spec = importlib.util.spec_from_file_location("release", REPO / "packaging" / "r
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
-A = "openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64"
-B = "openFPGALoader-1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12-linux-armv7"
+A = "openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64.tar.gz"
+B = "openFPGALoader-1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12-linux-armv7.tar.gz"
 C = "openocd-0.12.0+git20260920.b04ccfe+fpgasonline.0.0.post13-linux-arm64.tar.gz"
 D = "openocd-0.12.0+fpgasonline.0.0.post9-linux-armv6.tar.gz"
 
@@ -24,6 +24,8 @@ def test_classify():
     assert release.classify(A + ".sha256") is None
     assert release.classify("latest.json") is None
     assert release.classify("openocd-foo-linux-mips.tar.gz") is None
+    # a bare binary is no longer published
+    assert release.classify("openFPGALoader-1.1.1+fpgasonline.0.0.post1-linux-arm64") is None
 
 
 def test_version_key_orders_by_patchset_revision():

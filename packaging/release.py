@@ -22,9 +22,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Both tools ship as tarballs (binary plus the data directory it needs at
+# run time: bridge bitstreams for openFPGALoader, the Tcl tree for OpenOCD).
 ASSET_RE = re.compile(
     r"^(?P<file>(?P<tool>openFPGALoader|openocd)-(?P<version>[^/]+?)-linux-(?P<arch>arm64|armv7|armv6|amd64)"
-    r"(?P<ext>\.tar\.gz)?)(?P<sha>\.sha256)?$"
+    r"\.tar\.gz)(?P<sha>\.sha256)?$"
 )
 TOOL_KEY = {"openFPGALoader": "openfpgaloader", "openocd": "openocd"}
 

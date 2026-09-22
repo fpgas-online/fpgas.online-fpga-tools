@@ -81,7 +81,12 @@ mithro/rp1-jtag), so one `apt install` swaps them in place.
 On the [Releases](https://github.com/fpgas-online/fpgas.online-fpga-tools/releases)
 page, on the rolling release of the current series, named by version:
 
-- `openFPGALoader-<version>-linux-<arch>`: a single executable.
+- `openFPGALoader-<version>-linux-<arch>.tar.gz`: `bin/openFPGALoader` plus
+  `share/openFPGALoader/` (the spiOverJtag bridge bitstreams). The bridges
+  are runtime data: every SPI-flash access on a JTAG-attached FPGA loads one,
+  so a bare binary cannot even read a flash id. The binary looks in
+  `/usr/share/openFPGALoader` unless `OPENFPGALOADER_SOJ_DIR` (upstream
+  behaviour) points at the unpacked `share/openFPGALoader`.
 - `openocd-<version>-linux-<arch>.tar.gz`: `bin/openocd` plus
   `share/openocd/scripts`. OpenOCD needs its Tcl tree; run it as
   `OPENOCD_SCRIPTS=<dir>/share/openocd/scripts bin/openocd ...` or with `-s`.
