@@ -29,7 +29,7 @@ static_apk_deps() {
 		build-base cmake git python3 pkgconf curl file \
 		libftdi1-dev libftdi1-static libusb-dev eudev-dev \
 		zlib-dev zlib-static hidapi-dev linux-headers argp-standalone \
-		autoconf automake libtool texinfo "$@"
+		autoconf automake libtool texinfo
 }
 
 # libgpiod from source, static only. Alpine ships no static libgpiod.

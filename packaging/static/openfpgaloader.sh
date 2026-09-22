@@ -9,6 +9,7 @@
 set -eu
 track=$1
 version=$2
+# shellcheck source=packaging/static/common.sh
 . "$(dirname "$0")/common.sh"
 
 static_apk_deps

@@ -62,6 +62,7 @@ openocd)
 	(cd "$src" && ./configure \
 		--enable-bcm2835gpio --enable-linuxgpiod --enable-sysfsgpio \
 		"$rp1flag" --disable-werror \
+		--disable-internal-jimtcl --disable-internal-libjaylink \
 		--disable-doxygen-html --disable-doxygen-pdf)
 	make -C "$src" -j"$(nproc)"
 	bin=$src/src/openocd

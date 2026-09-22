@@ -12,6 +12,7 @@ set -eu
 track=$1
 version=$2
 local_version=$3
+# shellcheck source=packaging/static/common.sh
 . "$(dirname "$0")/common.sh"
 
 static_apk_deps
@@ -36,8 +37,10 @@ export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PAT
 cd "$src"
 [ -f Makefile ] && make distclean
 ./bootstrap nosubmodule
+# No static libjaylink on Alpine and no submodule contents in a fetch by
+# commit: the static build has no J-Link support.
 ./configure --prefix=/usr \
-	--enable-internal-jimtcl --disable-shared --enable-static \
+	--enable-internal-jimtcl --disable-internal-libjaylink --disable-shared --enable-static \
 	--enable-rp1-pio-jtag --enable-bcm2835gpio --enable-linuxgpiod --enable-sysfsgpio \
 	--enable-remote-bitbang \
 	--disable-doxygen-html --disable-doxygen-pdf --disable-werror \

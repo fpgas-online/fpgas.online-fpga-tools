@@ -12,6 +12,7 @@ Build-Depends: debhelper-compat (= 13),
                libftdi1-dev,
                libhidapi-dev,
                libjim-dev,
+               libjaylink-dev,
                libgpiod-dev,
                libcapstone-dev
 Standards-Version: 4.6.2
