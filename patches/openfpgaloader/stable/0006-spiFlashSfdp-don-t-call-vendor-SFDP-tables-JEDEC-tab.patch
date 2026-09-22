@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 21 Sep 2026 17:52:25 +0930
+Subject: [PATCH 06/24] spiFlashSfdp: don't call vendor SFDP tables "JEDEC
+ table"
+
+In SFDP parameter headers the ID LSB of a vendor table is the
+manufacturer JEDEC ID, and JESD216 rev 1.0 parts report 0xFF as MSB, so
+MSB == 0xFF does not make a table JEDEC defined: a Macronix flash on a
+NeTV2 reports its vendor table as 0xFFC2. Only name known JEDEC tables,
+call a table whose LSB matches the flash manufacturer ID a vendor table,
+and anything else unrecognised.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ src/spiFlash.cpp     |  2 +-
+ src/spiFlashSfdp.cpp | 13 +++++++------
+ src/spiFlashSfdp.hpp | 11 ++++++++---
+ 3 files changed, 16 insertions(+), 10 deletions(-)
+
+diff --git a/src/spiFlash.cpp b/src/spiFlash.cpp
+index 683728f..af01b81 100644
+--- a/src/spiFlash.cpp
++++ b/src/spiFlash.cpp
+@@ -857,7 +857,7 @@ void SPIFlash::display_info()
+ 				"this manufacturer/part)\n");
+ 	}
+ 
+-	sfdp.display();
++	sfdp.display(mfr);
+ 	printf("\n");
+ }
+ 
+diff --git a/src/spiFlashSfdp.cpp b/src/spiFlashSfdp.cpp
+index 892b41c..2f1db4a 100644
+--- a/src/spiFlashSfdp.cpp
++++ b/src/spiFlashSfdp.cpp
+@@ -237,7 +237,7 @@ std::vector<sfdp_4b_instr_t> SFDP::read_4b_instr() const
+ 	return instr;
+ }
+ 
+-std::string SFDP::table_name(uint16_t id)
++std::string SFDP::table_name(uint16_t id, uint8_t mfr_id)
+ {
+ 	switch (id) {
+ 		case 0xFF00: return "Basic Flash Parameter Table";
+@@ -246,9 +246,10 @@ std::string SFDP::table_name(uint16_t id)
+ 		case 0xFF87: return "Status, Control and Configuration Register Map";
+ 		default: break;
+ 	}
+-	if ((id >> 8) == 0xFF)
+-		return "JEDEC table";
+-	return "vendor table";
++	/* the LSB of a vendor table ID is the manufacturer JEDEC ID */
++	if ((id & 0xff) == mfr_id)
++		return "vendor table";
++	return "unrecognised table";
+ }
+ 
+ static std::string human_size(uint64_t bytes)
+@@ -263,7 +264,7 @@ static std::string human_size(uint64_t bytes)
+ 	return buf;
+ }
+ 
+-void SFDP::display() const
++void SFDP::display(uint8_t mfr_id) const
+ {
+ 	if (!_valid) {
+ 		printf("SFDP              : not supported\n");
+@@ -273,7 +274,7 @@ void SFDP::display() const
+ 	for (const auto &h : _headers)
+ 		printf("  table 0x%04x v%u.%u %3u DWORDs @ 0x%06x : %s\n",
+ 				h.id, h.major, h.minor, h.length, h.ptp,
+-				table_name(h.id).c_str());
++				table_name(h.id, mfr_id).c_str());
+ 	if (!has_bfpt()) {
+ 		printf("BFPT              : missing or truncated\n");
+ 		return;
+diff --git a/src/spiFlashSfdp.hpp b/src/spiFlashSfdp.hpp
+index 4f159fb..e157bc2 100644
+--- a/src/spiFlashSfdp.hpp
++++ b/src/spiFlashSfdp.hpp
+@@ -84,11 +84,16 @@ class SFDP {
+ 		std::vector<sfdp_4b_instr_t> read_4b_instr() const;
+ 		bool has_4bait() const { return !_4bait.empty(); }
+ 
+-		/* human readable name of a parameter table ID */
+-		static std::string table_name(uint16_t id);
++		/*!
++		 * \brief human readable name of a parameter table ID
++		 * \param[in] id: (MSB << 8) | LSB
++		 * \param[in] mfr_id: flash JEDEC manufacturer ID: a table whose
++		 *            LSB is this ID is a vendor table
++		 */
++		static std::string table_name(uint16_t id, uint8_t mfr_id);
+ 
+ 		/* display everything on stdout */
+-		void display() const;
++		void display(uint8_t mfr_id) const;
+ 
+ 	private:
+ 		uint32_t dw(uint8_t index) const {  // 1-based as in JESD216

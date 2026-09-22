@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Tue, 17 Mar 2026 20:48:54 +1030
+Subject: [PATCH 22/24] tt_fpga: fix issues found in code review
+
+Address issues identified by code review:
+
+- serialRead: retry read() on EINTR, handle EINTR from select()
+- enterRawRepl: anchor '>' search after "raw REPL" to avoid false
+  match on stray '>' in program output
+- program_sram: wrap chunk loop in try/catch, always call
+  finalizeSramProgramming() even on error so the iCE40 isn't left
+  in configuration mode with SS asserted
+- ProgressBar: fix inverted quiet parameter (_verbose < 0, not >= 0)
+- main.cpp: fix pre-existing bug where #else branch for !USE_LIBFTDI
+  unconditionally returns EXIT_FAILURE, making all non-SPI dispatch
+  (including TT MicroPython) unreachable without libftdi
+- CMakeLists.txt: restrict ENABLE_TT_MICROPYTHON to Linux only
+  (uses POSIX termios and sysfs, not available on macOS/Windows)
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+---
+ CMakeLists.txt        |  7 ++++-
+ src/ttMicropython.cpp | 68 ++++++++++++++++++++++++++++---------------
+ 2 files changed, 50 insertions(+), 25 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 539c3b2..85f6241 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -51,7 +51,12 @@ option(ENABLE_DFU              "enable DFU support (requires libUSB)"         ${
+ option(ENABLE_FTDI_BASED_CABLE "enable cables based on FTDI (requires libFTDI" ${ENABLE_CABLE_ALL})
+ option(ENABLE_GOWIN_GWU2X      "enable Gowin GWU2X interface"                 ${ENABLE_CABLE_ALL})
+ option(ENABLE_SVF_JTAG         "enable SVF support"                           ${ENABLE_CABLE_ALL})
+-option(ENABLE_TT_MICROPYTHON   "enable TinyTapeout MicroPython support"       ${ENABLE_CABLE_ALL})
++# TT MicroPython uses POSIX termios and sysfs — Linux only.
++if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
++	option(ENABLE_TT_MICROPYTHON "enable TinyTapeout MicroPython support" ${ENABLE_CABLE_ALL})
++else()
++	set(ENABLE_TT_MICROPYTHON OFF)
++endif()
+ option(ENABLE_USB_BLASTERI     "enable Altera USB Blaster I support"          ${ENABLE_CABLE_ALL})
+ option(ENABLE_USB_BLASTERII    "enable Altera USB Blaster II support"         ${ENABLE_CABLE_ALL})
+ 
+diff --git a/src/ttMicropython.cpp b/src/ttMicropython.cpp
+index b14abed..ed49a4b 100644
+--- a/src/ttMicropython.cpp
++++ b/src/ttMicropython.cpp
+@@ -170,10 +170,14 @@ ssize_t TTMicropython::serialRead(uint8_t *buf, size_t maxlen,
+ 	tv.tv_usec = (timeout_ms % 1000) * 1000;
+ 
+ 	int ret = select(_fd + 1, &rfds, NULL, NULL, &tv);
+-	if (ret < 0) return -1;
+-	if (ret == 0) return 0;  /* timeout */
+-
+-	return read(_fd, buf, maxlen);
++	if (ret < 0 && errno != EINTR) return -1;
++	if (ret <= 0) return 0;  /* timeout or EINTR */
++
++	ssize_t n;
++	do {
++		n = read(_fd, buf, maxlen);
++	} while (n < 0 && errno == EINTR);
++	return n;
+ }
+ 
+ void TTMicropython::drainSerial()
+@@ -223,9 +227,10 @@ bool TTMicropython::enterRawRepl()
+ 			if (n > 0) {
+ 				response.append(reinterpret_cast<char *>(buf),
+ 				                n);
+-				if (response.find("raw REPL") !=
+-				    std::string::npos &&
+-				    response.find('>') != std::string::npos) {
++				size_t rp = response.find("raw REPL");
++				if (rp != std::string::npos &&
++				    response.find('>', rp) !=
++				    std::string::npos) {
+ 					_in_raw_repl = true;
+ 					if (_verbose > 0)
+ 						printInfo("Entered MicroPython "
+@@ -484,25 +489,40 @@ void TTMicropython::program_sram()
+ 	if (!setupSramProgramming())
+ 		throw std::runtime_error("SRAM programming setup failed");
+ 
+-	/* Stream bitstream in chunks */
+-	const size_t chunk_size = 256;
+-	size_t total = bitstream.size();
+-	size_t sent = 0;
+-
+-	ProgressBar progress("Writing", total, 50, _verbose >= 0);
+-	while (sent < total) {
+-		size_t n = std::min(chunk_size, total - sent);
+-		if (!sendBitstreamChunk(bitstream.data() + sent, n))
+-			throw std::runtime_error("Failed to send bitstream chunk at offset "
+-			                         + std::to_string(sent));
+-		sent += n;
+-		progress.display(sent);
++	/* Stream bitstream in chunks.
++	 * If any chunk fails, we must still finalize (release SS, send
++	 * dummy clocks) so the iCE40 isn't left in configuration mode.
++	 */
++	bool sram_ok = true;
++	std::string sram_err;
++	try {
++		const size_t chunk_size = 256;
++		size_t total = bitstream.size();
++		size_t sent = 0;
++
++		ProgressBar progress("Writing", total, 50, _verbose < 0);
++		while (sent < total) {
++			size_t n = std::min(chunk_size, total - sent);
++			if (!sendBitstreamChunk(bitstream.data() + sent, n)) {
++				sram_err = "Failed to send bitstream chunk at "
++				           "offset " + std::to_string(sent);
++				sram_ok = false;
++				break;
++			}
++			sent += n;
++			progress.display(sent);
++		}
++		progress.done();
++	} catch (std::exception &e) {
++		sram_err = e.what();
++		sram_ok = false;
+ 	}
+-	progress.done();
+ 
+-	/* Finalize: dummy clocks, release SS */
+-	if (!finalizeSramProgramming())
+-		throw std::runtime_error("SRAM programming finalization failed");
++	/* Always finalize: dummy clocks, release SS */
++	finalizeSramProgramming();
++
++	if (!sram_ok)
++		throw std::runtime_error(sram_err);
+ 
+ 	/* Post-programming: restore board to a usable state.
+ 	 * - Release SPI pins (set to input)

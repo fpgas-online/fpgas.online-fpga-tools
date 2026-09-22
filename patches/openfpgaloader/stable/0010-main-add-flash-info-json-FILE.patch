@@ -1,0 +1,385 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 21 Sep 2026 19:07:07 +0930
+Subject: [PATCH 10/24] main: add --flash-info-json FILE
+
+--flash-info output is for humans, and scripts using it to identify a
+flash need a stable format. --flash-info-json implies --flash-info and
+also writes a versioned JSON document to FILE ("format":
+"openFPGALoader-flash-info", "version": 1) with one entry per flash:
+JEDEC ID fields, database/JEP106 names, size and its source, unique ID
+{state: read|blank|none, value, bits, opcode} and the decoded SFDP.
+
+FILE is removed at start and only written, through a temporary file
+and rename, when every flash access succeeded: an existing FILE and a
+zero exit status mean the content was really read.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ doc/guide/advanced.rst | 23 +++++++++++
+ src/main.cpp           | 58 ++++++++++++++++++++++++--
+ src/spiFlash.cpp       | 32 ++++++++++++++
+ src/spiFlash.hpp       |  8 ++++
+ src/spiFlashSfdp.cpp   | 94 ++++++++++++++++++++++++++++++++++++++++++
+ src/spiFlashSfdp.hpp   |  6 +++
+ 6 files changed, 218 insertions(+), 3 deletions(-)
+
+diff --git a/doc/guide/advanced.rst b/doc/guide/advanced.rst
+index e84ccf9..e472bfd 100644
+--- a/doc/guide/advanced.rst
++++ b/doc/guide/advanced.rst
+@@ -108,6 +108,29 @@ the JEDEC ID is not a valid one (manufacturer code failing JEP106 odd
+ parity) or is not the same when read twice: this happens when the flash
+ is not really reached (ie SPI bridge not loaded).
+ 
++For scripts, ``--flash-info-json FILE`` does the same and also writes the
++information to ``FILE`` as JSON. The file is only written when every flash
++access succeeded (a previous ``FILE`` is removed at start), so an existing
++file and a zero exit status mean the content was read:
++
++.. code-block:: json
++
++    {"format": "openFPGALoader-flash-info", "version": 1, "flashes": [
++      {"jedec_id": "0x010219", "manufacturer_id": "0x01", "memory_type": "0x02",
++       "capacity": "0x19", "manufacturer": "spansion",
++       "manufacturer_jep106": "Spansion / Cypress / Infineon",
++       "part": "S25FL256S", "size_bytes": 33554432, "size_source": "database",
++       "unique_id": {"state": "read", "value": "e2789916a0809a22bbc76634c1bf53ed",
++                     "bits": 128, "opcode": "0x4b"},
++       "sfdp": null}]}
++
++``flashes`` has one entry per flash (two with ``--target-flash both``).
++``unique_id.state`` is ``read``, ``blank`` (read, all ``0x00``/``0xFF``) or
++``none`` (no known unique ID command for this part); a failed unique ID read
++is an error. ``sfdp`` is ``null`` without SFDP, otherwise it holds the tables,
++``bfpt`` (density, address mode, DTR, page size, read modes with opcode and
++mode/dummy clocks, erase types, quad enable) and ``read_4byte``.
++
+ Detect/read/write on primary/secondary flash memories
+ =====================================================
+ 
+diff --git a/src/main.cpp b/src/main.cpp
+index 85b36c6..470a303 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -128,6 +128,7 @@ struct arguments {
+ 	std::string read_register;
+ 	std::string user_flash;
+ 	bool flash_info;
++	std::string flash_info_json;
+ };
+ 
+ int run_xvc_server(const struct arguments &args, const cable_t &cable,
+@@ -143,6 +144,36 @@ int parse_opt(int argc, char **argv, struct arguments *args,
+ 
+ void displaySupported(const struct arguments &args);
+ 
++/* --flash-info-json: write every SPIFlash::display_info() record, only
++ * called when all flash accesses succeeded
++ */
++static bool write_flash_info_json(const std::string &path)
++{
++	const std::vector<std::string> &recs = SPIFlash::info_json_records();
++	if (recs.empty()) {
++		printError("Error: no SPI flash information to write");
++		return false;
++	}
++	std::string j = "{\"format\": \"openFPGALoader-flash-info\", "
++		"\"version\": 1, \"flashes\": [";
++	for (size_t i = 0; i < recs.size(); i++)
++		j += (i ? ", " : "") + recs[i];
++	j += "]}\n";
++
++	/* write + rename: path never holds a partial file */
++	const std::string tmp = path + ".tmp";
++	std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
++	out << j;
++	out.close();
++	if (!out || rename(tmp.c_str(), path.c_str()) != 0) {
++		printError("Error: failed to write " + path);
++		remove(tmp.c_str());
++		return false;
++	}
++	printInfo("SPI flash information written to " + path);
++	return true;
++}
++
+ int main(int argc, char **argv)
+ {
+ 	cable_t cable;
+@@ -167,13 +198,18 @@ int main(int argc, char **argv)
+ 			"", false, {},  // mcufw conmcu, user_misc_dev_list
+ 			false, false, "", // read_dna, read_xadc, read_register
+ 			"", // user_flash
+-			false // flash_info
++			false, // flash_info
++			"" // flash_info_json
+ 	};
+ 	/* parse arguments */
+ 	int ret = parse_opt(argc, argv, &args, &pins_config);
+ 	if (ret != 0)
+ 		return (ret == 1) ? EXIT_SUCCESS : EXIT_FAILURE;
+ 
++	/* a failed run must not leave a previous run's file behind */
++	if (!args.flash_info_json.empty())
++		remove(args.flash_info_json.c_str());
++
+ 	if (args.is_list_command) {
+ 		displaySupported(args);
+ 		return EXIT_SUCCESS;
+@@ -636,7 +672,9 @@ int main(int argc, char **argv)
+ 
+ 	/* detect/display flash */
+ 	if (args.detect_flash != 0) {
+-		if (!fpga->detect_flash(args.flash_info)) {
++		if (!fpga->detect_flash(args.flash_info) ||
++				(!args.flash_info_json.empty() &&
++				 !write_flash_info_json(args.flash_info_json))) {
+ 			delete(fpga);
+ 			delete(jtag);
+ 			return EXIT_FAILURE;
+@@ -772,7 +810,9 @@ int spi_comm(struct arguments args, const cable_t &cable,
+ 					args.prg_type == Device::WR_SRAM) ||
+ 					!args.bit_file.empty() || !args.file_type.empty()) {
+ 			if (args.detect_flash) {
+-				if (!target->detect_flash(args.flash_info))
++				if (!target->detect_flash(args.flash_info) ||
++						(!args.flash_info_json.empty() &&
++						 !write_flash_info_json(args.flash_info_json)))
+ 					spi_ret = EXIT_FAILURE;
+ 			}
+ 			else
+@@ -804,6 +844,11 @@ int spi_comm(struct arguments args, const cable_t &cable,
+ 				delete spi;
+ 				return EXIT_FAILURE;
+ 			}
++			if (!args.flash_info_json.empty() &&
++					!write_flash_info_json(args.flash_info_json)) {
++				delete spi;
++				return EXIT_FAILURE;
++			}
+ 		}
+ 		flash.display_status_reg();
+ 
+@@ -954,6 +999,9 @@ int parse_opt(int argc, char **argv, struct arguments *args,
+ 			("flash-info",  "display detailed SPI flash information "
+ 				"(manufacturer, part, size, unique ID, SFDP read modes)",
+ 				cxxopts::value<bool>(args->flash_info))
++			("flash-info-json", "as --flash-info, and write the information "
++				"to a JSON file (only when every read succeeded)",
++				cxxopts::value<std::string>(args->flash_info_json))
+ 			("bulk-erase",   "Bulk erase flash",
+ 				cxxopts::value<bool>(args->bulk_erase_flash))
+ 			("enable-quad",   "Enable quad mode for SPI Flash",
+@@ -1204,6 +1252,10 @@ int parse_opt(int argc, char **argv, struct arguments *args,
+ 			args->pin_config = true;
+ 		}
+ 
++		// --flash-info-json implies --flash-info
++		if (!args->flash_info_json.empty())
++			args->flash_info = true;
++
+ 		if (args->target_flash == "both" || args->target_flash == "secondary") {
+ 			if ((args->prg_type == Device::WR_FLASH || args->prg_type == Device::RD_FLASH) &&
+ 				 args->secondary_bit_file.empty() &&
+diff --git a/src/spiFlash.cpp b/src/spiFlash.cpp
+index 1735e2c..b59a893 100644
+--- a/src/spiFlash.cpp
++++ b/src/spiFlash.cpp
+@@ -716,6 +716,8 @@ bool SPIFlash::read_sfdp(uint32_t addr, uint8_t *data, uint32_t len)
+ 	return true;
+ }
+ 
++std::vector<std::string> SPIFlash::_info_json_records;
++
+ SPIFlash::uid_state_t SPIFlash::read_unique_id(std::vector<uint8_t> &uid,
+ 		uint8_t &opcode)
+ {
+@@ -897,6 +899,36 @@ void SPIFlash::display_info()
+ 	sfdp.display(mfr);
+ 	printf("\n");
+ 
++	/* machine readable record (see --flash-info-json) */
++	static const char *uid_states[] = {"none", "blank", "read"};
++	const std::string jep106 = manufacturer_name(mfr);
++	std::string j = "{\"jedec_id\": " + json_hex(_jedec_id >> 8, 6) +
++		", \"manufacturer_id\": " + json_hex(mfr, 2) +
++		", \"memory_type\": " + json_hex(mem_type, 2) +
++		", \"capacity\": " + json_hex(capacity, 2) +
++		", \"manufacturer\": " + (_flash_model ?
++			json_string(_flash_model->manufacturer) : std::string("null")) +
++		", \"manufacturer_jep106\": " + (jep106 == "unknown" ?
++			std::string("null") : json_string(jep106)) +
++		", \"part\": " + (_flash_model ?
++			json_string(_flash_model->model) : std::string("null"));
++	static const char *size_srcs[] = {"database", "sfdp", "jedec_capacity"};
++	if (size)
++		j += ", \"size_bytes\": " + std::to_string(size) +
++			", \"size_source\": " + json_string(
++				size_src == "database" ? size_srcs[0] :
++				size_src == "SFDP" ? size_srcs[1] : size_srcs[2]);
++	else
++		j += ", \"size_bytes\": null, \"size_source\": null";
++	j += std::string(", \"unique_id\": {\"state\": \"") + uid_states[uid_state] +
++		"\", \"value\": " + (uid_state == UID_READ ? json_string(uid_hex) :
++				std::string("null")) +
++		", \"bits\": " + (uid_state == UID_NONE ? std::string("null") :
++				std::to_string(uid.size() * 8)) +
++		", \"opcode\": " + (uid_state == UID_NONE ? std::string("null") :
++				json_hex(uid_opcode, 2)) + "}";
++	j += ", \"sfdp\": " + sfdp.to_json(mfr) + "}";
++	_info_json_records.push_back(j);
+ }
+ 
+ void SPIFlash::display_status_reg(uint8_t reg)
+diff --git a/src/spiFlash.hpp b/src/spiFlash.hpp
+index 5b3cad9..7c495ba 100644
+--- a/src/spiFlash.hpp
++++ b/src/spiFlash.hpp
+@@ -160,6 +160,13 @@ class SPIFlash {
+ 		 * \throw std::runtime_error when the read itself fails
+ 		 */
+ 		uid_state_t read_unique_id(std::vector<uint8_t> &uid, uint8_t &opcode);
++		/*!
++		 * \brief JSON records (one per flash) built by display_info()
++		 *        since the start of the program
++		 */
++		static const std::vector<std::string> &info_json_records() {
++			return _info_json_records;
++		}
+ 		/*!
+ 		 * \brief return manufacturer name based on JEDEC manufacturer ID
+ 		 */
+@@ -214,6 +221,7 @@ class SPIFlash {
+ 		bool _unprotect; /**< allows to unprotect memory before write */
+ 		bool _must_relock;
+ 		uint8_t _status;
++		static std::vector<std::string> _info_json_records;
+ };
+ 
+ #endif  // SRC_SPIFLASH_HPP_
+diff --git a/src/spiFlashSfdp.cpp b/src/spiFlashSfdp.cpp
+index 2f1db4a..739a706 100644
+--- a/src/spiFlashSfdp.cpp
++++ b/src/spiFlashSfdp.cpp
+@@ -312,3 +312,97 @@ void SFDP::display(uint8_t mfr_id) const
+ 	if (!qer.empty())
+ 		printf("Quad enable       : %s\n", qer.c_str());
+ }
++
++std::string json_string(const std::string &s)
++{
++	std::string out = "\"";
++	for (unsigned char c : s) {
++		if (c == '"' || c == '\\') {
++			out += '\\';
++			out += c;
++		} else if (c < 0x20) {
++			char buf[8];
++			snprintf(buf, sizeof(buf), "\\u%04x", c);
++			out += buf;
++		} else {
++			out += c;
++		}
++	}
++	return out + "\"";
++}
++
++std::string json_hex(uint32_t v, int digits)
++{
++	char buf[16];
++	snprintf(buf, sizeof(buf), "\"0x%0*x\"", digits, v);
++	return buf;
++}
++
++std::string SFDP::to_json(uint8_t mfr_id) const
++{
++	if (!_valid)
++		return "null";
++
++	std::string j = "{\"revision\": " +
++		json_string(std::to_string(_major) + "." + std::to_string(_minor));
++
++	j += ", \"tables\": [";
++	for (size_t i = 0; i < _headers.size(); i++) {
++		const sfdp_param_header_t &h = _headers[i];
++		j += (i ? ", " : "");
++		j += "{\"id\": " + json_hex(h.id, 4) +
++			", \"revision\": " + json_string(std::to_string(h.major) + "." +
++					std::to_string(h.minor)) +
++			", \"dwords\": " + std::to_string(h.length) +
++			", \"address\": " + json_hex(h.ptp, 6) +
++			", \"name\": " + json_string(table_name(h.id, mfr_id)) + "}";
++	}
++	j += "]";
++
++	if (!has_bfpt())
++		return j + ", \"bfpt\": null}";
++
++	static const char *addr_modes[] = {"3-byte", "3-or-4-byte", "4-byte",
++		"reserved"};
++	j += ", \"bfpt\": {\"density_bits\": " + std::to_string(density_bits()) +
++		", \"address_mode\": " + json_string(addr_modes[address_bytes()]) +
++		", \"dtr\": " + (dtr_support() ? "true" : "false") +
++		", \"page_size\": " +
++		(page_size() ? std::to_string(page_size()) : std::string("null"));
++
++	j += ", \"read_modes\": [";
++	const std::vector<sfdp_read_mode_t> modes = read_modes();
++	for (size_t i = 0; i < modes.size(); i++)
++		j += std::string(i ? ", " : "") + "{\"mode\": " +
++			json_string(modes[i].name) +
++			", \"opcode\": " + json_hex(modes[i].opcode, 2) +
++			", \"mode_clocks\": " + std::to_string(modes[i].mode_clocks) +
++			", \"dummy_clocks\": " + std::to_string(modes[i].dummy_clocks) + "}";
++	j += "]";
++
++	j += ", \"erase_types\": [";
++	const std::vector<sfdp_erase_type_t> erase = erase_types();
++	for (size_t i = 0; i < erase.size(); i++)
++		j += std::string(i ? ", " : "") + "{\"size\": " +
++			std::to_string(erase[i].size) +
++			", \"opcode\": " + json_hex(erase[i].opcode, 2) + "}";
++	j += "]";
++
++	const std::string qer = quad_enable_req();
++	j += ", \"quad_enable\": " + (qer.empty() ? std::string("null") :
++			json_string(qer)) + "}";
++
++	j += ", \"read_4byte\": ";
++	if (!has_4bait()) {
++		j += "null";
++	} else {
++		j += "[";
++		const std::vector<sfdp_4b_instr_t> instr = read_4b_instr();
++		for (size_t i = 0; i < instr.size(); i++)
++			j += std::string(i ? ", " : "") + "{\"name\": " +
++				json_string(instr[i].name) +
++				", \"opcode\": " + json_hex(instr[i].opcode, 2) + "}";
++		j += "]";
++	}
++	return j + "}";
++}
+diff --git a/src/spiFlashSfdp.hpp b/src/spiFlashSfdp.hpp
+index e157bc2..b1dd902 100644
+--- a/src/spiFlashSfdp.hpp
++++ b/src/spiFlashSfdp.hpp
+@@ -94,6 +94,8 @@ class SFDP {
+ 
+ 		/* display everything on stdout */
+ 		void display(uint8_t mfr_id) const;
++		/* everything as a JSON object ("null" when no SFDP) */
++		std::string to_json(uint8_t mfr_id) const;
+ 
+ 	private:
+ 		uint32_t dw(uint8_t index) const {  // 1-based as in JESD216
+@@ -107,4 +109,8 @@ class SFDP {
+ 		std::vector<uint32_t> _4bait;
+ };
+ 
++/* JSON helpers */
++std::string json_string(const std::string &s);  /* quoted and escaped */
++std::string json_hex(uint32_t v, int digits);     /* "0x..." lowercase */
++
+ #endif  // SRC_SPIFLASHSFDP_HPP_

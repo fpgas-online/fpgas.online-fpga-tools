@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 21 Sep 2026 18:16:16 +0930
+Subject: [PATCH 08/24] spiFlash: refuse to display info for an invalid or
+ unstable JEDEC ID
+
+Without the spiOverJtag bridge, a NeTV2 answered 0xc009a0 and then
+0xc1d1e1/0xadf997 to RDID, which --flash-info displayed as a normal
+report and exit status 0. As this output identifies a part, throw
+instead when the manufacturer code fails JEP106 odd parity (7 data bits
++ 1 odd parity bit) or when a second RDID returns another ID.
+Both checks are needed: 0xc1 has odd parity.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ doc/guide/advanced.rst |  5 +++++
+ src/main.cpp           | 12 ++++++++++--
+ src/spiFlash.cpp       | 24 ++++++++++++++++++++++++
+ src/spiFlash.hpp       |  2 ++
+ 4 files changed, 41 insertions(+), 2 deletions(-)
+
+diff --git a/doc/guide/advanced.rst b/doc/guide/advanced.rst
+index c14f373..268a988 100644
+--- a/doc/guide/advanced.rst
++++ b/doc/guide/advanced.rst
+@@ -103,6 +103,11 @@ Display detailed SPI flash information
+ 
+ Only read-only commands are sent to the flash.
+ 
++The report is not displayed, and openFPGALoader exits with an error, when
++the JEDEC ID is not a valid one (manufacturer code failing JEP106 odd
++parity) or is not the same when read twice: this happens when the flash
++is not really reached (ie SPI bridge not loaded).
++
+ Detect/read/write on primary/secondary flash memories
+ =====================================================
+ 
+diff --git a/src/main.cpp b/src/main.cpp
+index f39d0bb..384f06e 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -837,8 +837,16 @@ int spi_comm(struct arguments args, const cable_t &cable,
+ 		}
+ 
+ 		SPIFlash flash((FlashInterface *)spi, args.unprotect_flash, args.verbose);
+-		if (args.flash_info)
+-			flash.display_info();
++		if (args.flash_info) {
++			try {
++				flash.display_info();
++			} catch (std::exception &e) {
++				printError("Fail");
++				printError(e.what());
++				delete spi;
++				return EXIT_FAILURE;
++			}
++		}
+ 		flash.display_status_reg();
+ 
+ 		if (args.prg_type != Device::RD_FLASH &&
+diff --git a/src/spiFlash.cpp b/src/spiFlash.cpp
+index 93f2b8b..1bc1ad1 100644
+--- a/src/spiFlash.cpp
++++ b/src/spiFlash.cpp
+@@ -795,6 +795,30 @@ void SPIFlash::display_info()
+ 	const uint8_t mem_type = (_jedec_id >> 16) & 0xff;
+ 	const uint8_t capacity = (_jedec_id >> 8) & 0xff;
+ 
++	/* this output identifies a part: refuse to report an ID that is not
++	 * a real one (ie read without a working SPI bridge)
++	 * JEP106: 7 data bits + 1 odd parity bit
++	 */
++	int ones = 0;
++	for (int i = 0; i < 8; i++)
++		ones += (mfr >> i) & 0x01;
++	if ((ones & 0x01) == 0) {
++		char msg[128];
++		snprintf(msg, sizeof(msg), "Invalid JEDEC ID 0x%06x: manufacturer "
++				"0x%02x fails JEP106 odd parity", _jedec_id >> 8, mfr);
++		throw std::runtime_error(msg);
++	}
++	/* a second read must give the same ID */
++	uint8_t rx[3];
++	_spi->spi_put(0x9F, NULL, rx, 3);
++	const uint32_t id2 = (rx[0] << 16) | (rx[1] << 8) | rx[2];
++	if (id2 != (_jedec_id >> 8)) {
++		char msg[128];
++		snprintf(msg, sizeof(msg), "Unstable JEDEC ID: 0x%06x then 0x%06x",
++				_jedec_id >> 8, id2);
++		throw std::runtime_error(msg);
++	}
++
+ 	/* SFDP: failure is not an error (old parts) */
+ 	SFDP sfdp;
+ 	try {
+diff --git a/src/spiFlash.hpp b/src/spiFlash.hpp
+index 09d854a..fabca0f 100644
+--- a/src/spiFlash.hpp
++++ b/src/spiFlash.hpp
+@@ -134,6 +134,8 @@ class SPIFlash {
+ 		/*!
+ 		 * \brief display complete flash information: manufacturer,
+ 		 *        part, size, unique ID and SFDP content (read modes, ...)
++		 * \throw std::runtime_error when the JEDEC ID is not a valid
++		 *        (JEP106 parity) or stable one: nothing is displayed
+ 		 */
+ 		void display_info();
+ 		/*!

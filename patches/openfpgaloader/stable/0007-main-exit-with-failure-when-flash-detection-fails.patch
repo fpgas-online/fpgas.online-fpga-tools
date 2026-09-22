@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 21 Sep 2026 18:16:16 +0930
+Subject: [PATCH 07/24] main: exit with failure when flash detection fails
+
+detect_flash() result was ignored, so --detect -f and --flash-info
+exited 0 even when the flash could not be read: a caller could not tell
+a flash without unique ID from a flash never read.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ src/main.cpp | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index c81a8a8..5e90de8 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -636,7 +636,11 @@ int main(int argc, char **argv)
+ 
+ 	/* detect/display flash */
+ 	if (args.detect_flash != 0) {
+-		fpga->detect_flash(args.flash_info);
++		if (!fpga->detect_flash(args.flash_info)) {
++			delete(fpga);
++			delete(jtag);
++			return EXIT_FAILURE;
++		}
+ 	}
+ 
+ 	if (args.prg_type == Device::RD_FLASH) {
+@@ -767,8 +771,10 @@ int spi_comm(struct arguments args, const cable_t &cable,
+ 		} else if ((args.prg_type == Device::WR_FLASH ||
+ 					args.prg_type == Device::WR_SRAM) ||
+ 					!args.bit_file.empty() || !args.file_type.empty()) {
+-			if (args.detect_flash)
+-				target->detect_flash(args.flash_info);
++			if (args.detect_flash) {
++				if (!target->detect_flash(args.flash_info))
++					spi_ret = EXIT_FAILURE;
++			}
+ 			else
+ 				target->program(args.offset, args.unprotect_flash);
+ 		}

@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim Ansell <me@mith.ro>
+Date: Tue, 22 Sep 2026 11:41:59 +0930
+Subject: [PATCH 24/24] cmake: allow the reported version string to be
+ overridden
+
+--Version printed v${PROJECT_VERSION} unconditionally, so a distribution
+build carrying local patches was indistinguishable from the upstream
+release it was based on. OPENFPGALOADER_VERSION is a cache variable
+defaulting to the old value; packagers pass their own string.
+---
+ CMakeLists.txt | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index edaf04e..8381b9f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2,7 +2,11 @@ cmake_minimum_required(VERSION 3.10)
+ 
+ # set the project name
+ project(openFPGALoader VERSION "1.1.1" LANGUAGES CXX)
+-add_definitions(-DVERSION=\"v${PROJECT_VERSION}\")
++# Distributors carrying local patches set this so --Version says which
++# build a bug report comes from, e.g. -DOPENFPGALOADER_VERSION=v1.1.1+distro.3
++set(OPENFPGALOADER_VERSION "v${PROJECT_VERSION}" CACHE STRING
++	"version string reported by --Version")
++add_definitions(-DVERSION=\"${OPENFPGALOADER_VERSION}\")
+ 
+ #if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+ #	set(WINDOWS_CROSSCOMPILE ON)

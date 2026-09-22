@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 21 Sep 2026 19:36:21 +0930
+Subject: [PATCH 13/24] spiFlashSfdp: don't report reserved 4BAIT bits as octal
+ reads
+
+4-Byte Address Instruction Table DWORD 1 bits 20/21 were decoded as
+1-1-8 / 1-8-8 fast reads, but JESD216B defines bits 31:20 as reserved
+(= 1): a quad S25FL127S (SFDP 1.6, datasheet "Bits 31:20 = RFU = FFFh")
+was reported as supporting octal reads. Keep the JESD216B bits, as
+Linux spi-nor does (0-5, 13-15).
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ src/spiFlashSfdp.cpp | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/spiFlashSfdp.cpp b/src/spiFlashSfdp.cpp
+index 739a706..83b332f 100644
+--- a/src/spiFlashSfdp.cpp
++++ b/src/spiFlashSfdp.cpp
+@@ -215,6 +215,10 @@ std::string SFDP::quad_enable_req() const
+ 
+ std::vector<sfdp_4b_instr_t> SFDP::read_4b_instr() const
+ {
++	/* JESD216B bits only, as used by Linux spi-nor: bits 16 and up are
++	 * reserved there and reserved SFDP bits read as 1 (a quad
++	 * S25FL-S part reports them set)
++	 */
+ 	static const struct { int bit; const char *name; uint8_t op; } list[] = {
+ 		{0,  "1-1-1 read",      0x13},
+ 		{1,  "1-1-1 fast read", 0x0C},
+@@ -222,8 +226,6 @@ std::vector<sfdp_4b_instr_t> SFDP::read_4b_instr() const
+ 		{3,  "1-2-2 fast read", 0xBC},
+ 		{4,  "1-1-4 fast read", 0x6C},
+ 		{5,  "1-4-4 fast read", 0xEC},
+-		{20, "1-1-8 fast read", 0x7C},
+-		{21, "1-8-8 fast read", 0xCC},
+ 		{13, "1-1-1 DTR read",  0x0E},
+ 		{14, "1-2-2 DTR read",  0xBE},
+ 		{15, "1-4-4 DTR read",  0xEE},

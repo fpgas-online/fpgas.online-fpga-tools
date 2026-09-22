@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Tue, 17 Mar 2026 20:56:12 +1030
+Subject: [PATCH 15/24] Add netv2 and netv2_100 board definitions with
+ auto-detected cable
+
+NeTV2 (Xilinx Artix-7) board definitions with built-in JTAG pin
+configuration (TCK=GPIO4, TMS=GPIO17, TDI=GPIO27, TDO=GPIO22):
+
+- netv2: XC7A35T variant (default, more common)
+- netv2_100: XC7A100T variant
+
+The GPIO cable is auto-detected at runtime: rp1pio on RPi 5 (via
+/dev/pio0 detection), libgpiod on older Raspberry Pis. Users just
+run: sudo openFPGALoader --board netv2 bitstream.bit
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+---
+ src/board.hpp |  4 ++++
+ src/main.cpp  | 23 +++++++++++++++++++++++
+ 2 files changed, 27 insertions(+)
+
+diff --git a/src/board.hpp b/src/board.hpp
+index cd15d21..de12b26 100644
+--- a/src/board.hpp
++++ b/src/board.hpp
+@@ -220,6 +220,10 @@ static std::map <std::string, target_board_t> board_list = {
+ 	JTAG_BOARD("mlk-s200-eg4d20", "",                     "anlogicCable", SPI_FLASH, 0, 0, CABLE_DEFAULT),
+ 	JTAG_BOARD("mimas_a7",		  "xc7a50tfgg484",	      "numato",       SPI_FLASH, 0, 0, CABLE_MHZ(30)),
+ 	JTAG_BOARD("neso_a7",         "xc7a100tcsg324",	      "numato-neso",  SPI_FLASH, 0, 0, CABLE_MHZ(30)),
++	JTAG_BITBANG_BOARD("netv2",      "xc7a35tfgg484",   "",             SPI_FLASH, 0, 0,
++			17, 4, 27, 22, CABLE_DEFAULT),
++	JTAG_BITBANG_BOARD("netv2_100", "xc7a100tfgg484",   "",             SPI_FLASH, 0, 0,
++			17, 4, 27, 22, CABLE_DEFAULT),
+ 	JTAG_BOARD("minispartan6",    "",                     "ft2232",       SPI_FLASH, 0, 0, CABLE_DEFAULT),
+ 	JTAG_BOARD("nexys_a7_50",     "xc7a50tcsg324",        "digilent",     SPI_FLASH, 0, 0, CABLE_DEFAULT),
+ 	JTAG_BOARD("nexys_a7_100",    "xc7a100tcsg324",       "digilent",     SPI_FLASH, 0, 0, CABLE_DEFAULT),
+diff --git a/src/main.cpp b/src/main.cpp
+index a13a78b..49bfd73 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -260,6 +260,29 @@ int main(int argc, char **argv)
+ 			}
+ 		}
+ 
++		/* Auto-detect GPIO cable for boards with bitbang pins but no
++		 * default cable (e.g. netv2): use rp1pio on RPi 5, libgpiod
++		 * elsewhere.
++		 */
++		if (args.cable[0] == '-' && board->cable_name.empty() &&
++		    board->jtag_pins_config.tck_pin != 0) {
++#ifdef ENABLE_RP1_PIO
++			if (access("/dev/pio0", F_OK) == 0) {
++				args.cable = "rp1pio";
++			} else
++#endif
++			{
++#ifdef ENABLE_LIBGPIOD
++				args.cable = "libgpiod";
++#else
++				printError("No GPIO cable available: "
++					"build with ENABLE_RP1_PIO or ENABLE_LIBGPIOD");
++				return EXIT_FAILURE;
++#endif
++			}
++			printInfo("Auto-detected cable: " + args.cable);
++		}
++
+ 		/* Xilinx only: to write flash exact fpga model must be provided */
+ 		if (!board->fpga_part.empty() && !args.fpga_part.empty())
+ 			printInfo("Board default fpga part overridden with " + args.fpga_part);

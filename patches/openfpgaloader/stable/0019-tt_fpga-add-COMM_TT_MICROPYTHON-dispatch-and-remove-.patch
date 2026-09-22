@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 16 Mar 2026 17:47:50 +1030
+Subject: [PATCH 19/24] tt_fpga: add COMM_TT_MICROPYTHON dispatch and remove
+ mcufw debug print
+
+Add TT MicroPython dispatch block in main() after the DFU section,
+following the same pattern: check board->mode, auto-detect or use
+specified serial port, instantiate TTMicropython, call detect/program.
+
+Also remove leftover debug printf("empty/pas empty") for args.mcufw
+that was polluting stdout on every invocation.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+---
+ src/main.cpp | 49 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 49 insertions(+)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index e372950..bcb07f9 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -30,6 +30,9 @@
+ #ifdef ENABLE_DFU
+ #include "dfu.hpp"
+ #endif
++#ifdef ENABLE_TT_MICROPYTHON
++#include "ttMicropython.hpp"
++#endif
+ #include "display.hpp"
+ #ifdef ENABLE_EFINIX_SUPPORT
+ #include "efinix.hpp"
+@@ -421,6 +424,52 @@ int main(int argc, char **argv)
+ #endif
+ 	}
+ 
++	/* --------------------------------- */
++	/* TinyTapeout MicroPython access   */
++	/* --------------------------------- */
++	if (board && board->mode == COMM_TT_MICROPYTHON) {
++#ifdef ENABLE_TT_MICROPYTHON
++		std::string serial_port = args.device;
++		if (serial_port.empty() || serial_port == "-") {
++			serial_port = TTMicropython::detectSerialPort(args.verbose);
++			if (serial_port.empty()) {
++				printError("No TinyTapeout board found");
++				return EXIT_FAILURE;
++			}
++		}
++
++		bool write_flash = (args.prg_type == Device::WR_FLASH);
++
++		try {
++			TTMicropython tt(args.bit_file, args.file_type,
++				serial_port, write_flash, args.verify, args.verbose);
++
++			if (args.detect) {
++				tt.detect();
++				return EXIT_SUCCESS;
++			}
++
++			if (args.bit_file.empty()) {
++				printError("No bitstream file specified");
++				return EXIT_FAILURE;
++			}
++
++			if (write_flash)
++				tt.program_flash();
++			else
++				tt.program_sram();
++		} catch (std::exception &e) {
++			printError("TT MicroPython failed: " + string(e.what()));
++			return EXIT_FAILURE;
++		}
++
++		return EXIT_SUCCESS;
++#else
++		printError("TinyTapeout MicroPython support: disabled at build time");
++		return EXIT_FAILURE;
++#endif
++	}
++
+ #ifdef ENABLE_XVC_SERVER
+ 	/* ------------------- */
+ 	/*      XVC server     */

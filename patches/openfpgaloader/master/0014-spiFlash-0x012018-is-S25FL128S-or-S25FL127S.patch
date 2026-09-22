@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 21 Sep 2026 19:36:21 +0930
+Subject: [PATCH 14/24] spiFlash: 0x012018 is S25FL128S or S25FL127S
+
+Both parts answer 0x012018. An Arty A7 read on real hardware returns
+SFDP 1.6 for it, which the S25FL128S (datasheet rev 06) does not have
+and the S25FL127S does: name both. The S25FL127S datasheet documents the
+same OTP factory random number (8.1.3) and OTPR latency (9.7.2), so the
+unique ID read is valid for both.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ doc/guide/advanced.rst | 2 +-
+ src/spiFlash.cpp       | 4 ++--
+ src/spiFlashdb.hpp     | 3 ++-
+ 3 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/doc/guide/advanced.rst b/doc/guide/advanced.rst
+index 33ed03d..35af5db 100644
+--- a/doc/guide/advanced.rst
++++ b/doc/guide/advanced.rst
+@@ -90,7 +90,7 @@ Display detailed SPI flash information
+ 
+ * manufacturer, part name and size (from the internal database, SFDP or the JEDEC ID),
+ * factory programmed unique ID / serial number when the manufacturer provides one
+-  (Winbond, GigaDevice, ISSI, Puya, Micron N25Q/MT25Q, Spansion S25FL128S/256S,
++  (Winbond, GigaDevice, ISSI, Puya, Micron N25Q/MT25Q, Spansion S25FL127S/128S/256S,
+   Infineon S25FL-L, SST26, and Macronix when its secured OTP holds a factory
+   programmed ESN: most Macronix parts ship without one, and the report then
+   says so, from the security register),
+diff --git a/src/spiFlash.cpp b/src/spiFlash.cpp
+index c302628..a3aaa48 100644
+--- a/src/spiFlash.cpp
++++ b/src/spiFlash.cpp
+@@ -804,8 +804,8 @@ SPIFlash::uid_state_t SPIFlash::read_unique_id(std::vector<uint8_t> &uid,
+ 				/* Spansion S25FL256S / S25FL128S: OTP bytes 0x0-0xF hold
+ 				 * a factory programmed 128-bit random number
+ 				 * (S25FL128S/256S datasheet 9.1.3), read with OTPR:
+-				 * 3 addr + 1 dummy (10.7.2).
+-				 * 0x012018 is also S25FL127S: not checked against its datasheet
++				 * 3 addr + 1 dummy (10.7.2). Same for the S25FL127S, which
++				 * shares 0x012018 (S25FL127S datasheet 8.1.3 and 9.7.2).
+ 				 */
+ 				cmd = FLASH_ROTP; skip = 4; uid_len = 16;
+ 			} else {
+diff --git a/src/spiFlashdb.hpp b/src/spiFlashdb.hpp
+index e6bdf0f..30e542a 100644
+--- a/src/spiFlashdb.hpp
++++ b/src/spiFlashdb.hpp
+@@ -89,7 +89,8 @@ static std::map <uint32_t, flash_t> flash_list = {
+ 	}},
+ 	{0x012018, {
+ 		.manufacturer = "Spansion",
+-		.model = "S25FL128S",
++		/* same JEDEC ID: S25FL128S (no SFDP) and S25FL127S (SFDP) */
++		.model = "S25FL128S/S25FL127S",
+ 		.nr_sector = 256,
+ 		.sector_erase = true,
+ 		.subsector_erase = false,
