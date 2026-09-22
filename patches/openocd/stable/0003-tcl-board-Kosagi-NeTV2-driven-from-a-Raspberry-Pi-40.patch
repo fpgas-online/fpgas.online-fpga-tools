@@ -1,51 +1,58 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim Ansell <me@mith.ro>
-Date: Tue, 22 Sep 2026 11:48:00 +0930
+Date: Tue, 22 Sep 2026 12:36:58 +0930
 Subject: [PATCH 3/4] tcl/board: Kosagi NeTV2 driven from a Raspberry Pi 40-pin
  header
 
 The NeTV2 (Artix-7 XC7A35T or XC7A100T) stacks on a Raspberry Pi and is
 programmed over JTAG from the Pi's header: TCK GPIO4, TMS GPIO17,
-TDI GPIO27, TDO GPIO22, SRST GPIO24. Which adapter can drive those pins
-depends on the Pi generation, so there is one board file per adapter
-and one that picks:
+TDI GPIO27, TDO GPIO22. Which adapter can drive those pins depends on the
+Pi generation, so there is one board file per adapter and one that picks:
 
   netv2-rpi-bcm2835gpio.cfg  Pi 1-4 / Zero, memory-mapped GPIO (the
-                             wiring Alphamax's own scripts use), on top
-                             of interface/raspberrypi-native.cfg so the
-                             SoC generation and clock calibration are
-                             detected rather than typed
+                             wiring Alphamax's own scripts use); the SoC
+                             generation and clock calibration are derived
+                             from the device tree and cpufreq with the
+                             table of values interface/raspberrypi-native.cfg
+                             uses, rather than sourcing that file (which
+                             also claims the standard header JTAG/SWD pins)
   netv2-rpi-rp1pio.cfg       Pi 5 through the RP1 PIO (rp1_pio_jtag)
   netv2-rpi-linuxgpiod.cfg   any Pi through the GPIO character device;
                              NETV2_GPIOCHIP selects the RP1's chip on a
                              Pi 5
-  netv2-rpi.cfg              /dev/pio0 -> rp1pio, other Pi 5 ->
-                             linuxgpiod, else bcm2835gpio
+  netv2-rpi.cfg              /dev/pio0 -> rp1pio, other BCM2712 (Pi 5,
+                             CM5) -> linuxgpiod, else bcm2835gpio
   netv2-rpi-spiflash.cfg     the configuration flash through a bscan_spi
                              proxy (jtagspi), netv2_spi_init <proxy.bit>
+
+Nothing drives GPIO24 (the reset line in Alphamax's scripts): the JTAG
+chain alone is enough to program and read the device, and reset_config
+none keeps every variant identical in that respect.
 
 Every file states both pin-order conventions, since OpenOCD's jtag_nums
 (TCK TMS TDI TDO) and openFPGALoader's --pins (TDI:TDO:TCK:TMS) describe
 the same wires in different orders.
 ---
- tcl/board/netv2-rpi-bcm2835gpio.cfg | 79 +++++++++++++++++++++++++++++
- tcl/board/netv2-rpi-linuxgpiod.cfg  | 39 ++++++++++++++
+ tcl/board/netv2-rpi-bcm2835gpio.cfg | 78 +++++++++++++++++++++++++++++
+ tcl/board/netv2-rpi-linuxgpiod.cfg  | 39 +++++++++++++++
  tcl/board/netv2-rpi-rp1pio.cfg      | 25 +++++++++
- tcl/board/netv2-rpi-spiflash.cfg    | 24 +++++++++
+ tcl/board/netv2-rpi-spiflash.cfg    | 26 ++++++++++
  tcl/board/netv2-rpi.cfg             | 29 +++++++++++
- 5 files changed, 196 insertions(+)
+ tcl/fpga/lattice-ecp5-traceid.cfg   | 35 +++++++++++++
+ 6 files changed, 232 insertions(+)
  create mode 100644 tcl/board/netv2-rpi-bcm2835gpio.cfg
  create mode 100644 tcl/board/netv2-rpi-linuxgpiod.cfg
  create mode 100644 tcl/board/netv2-rpi-rp1pio.cfg
  create mode 100644 tcl/board/netv2-rpi-spiflash.cfg
  create mode 100644 tcl/board/netv2-rpi.cfg
+ create mode 100644 tcl/fpga/lattice-ecp5-traceid.cfg
 
 diff --git a/tcl/board/netv2-rpi-bcm2835gpio.cfg b/tcl/board/netv2-rpi-bcm2835gpio.cfg
 new file mode 100644
-index 0000000..2859689
+index 0000000..e7c0f39
 --- /dev/null
 +++ b/tcl/board/netv2-rpi-bcm2835gpio.cfg
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,78 @@
 +# SPDX-License-Identifier: GPL-2.0-or-later
 +
 +# Kosagi NeTV2 (Xilinx Artix-7 XC7A35T or XC7A100T, FGG484) programmed over
@@ -58,18 +65,18 @@ index 0000000..2859689
 +# Wiring (BCM GPIO numbers / header pins):
 +#   TCK  GPIO4   pin 7        TDI  GPIO27  pin 13
 +#   TMS  GPIO17  pin 11       TDO  GPIO22  pin 15
-+#   SRST GPIO24  pin 18 (configured because the driver insists on a reset
-+#                        line, but never driven: reset_config none)
++# GPIO24 (pin 18) is wired to the FPGA's reset in the Alphamax scripts but
++# is deliberately left unconfigured here so that nothing drives it.
 +#
 +# OpenOCD's jtag_nums take TCK TMS TDI TDO (4 17 27 22); openFPGALoader's
 +# --pins take TDI:TDO:TCK:TMS (27:22:4:17) for the same wires.
 +#
-+# OpenOCD 0.12.0's interface/raspberrypi-native.cfg is fixed to a 700 MHz
-+# Pi 1, so the SoC generation and the bit-bang delay calibration are derived
-+# here the way later releases do it: the peripheral base (only used when
-+# /dev/gpiomem is unavailable and the driver falls back to /dev/mem) from
-+# the device tree compatible string, the delay coefficients from the CPU
-+# clock.
++# The SoC generation and the bit-bang delay calibration are derived the way
++# upstream's interface/raspberrypi-native.cfg does it (same table of values):
++# the peripheral base (only used when /dev/gpiomem is unavailable and the
++# driver falls back to /dev/mem) from the device tree compatible string, the
++# delay coefficients from the CPU clock. It is not sourced directly because
++# it also configures the standard JTAG/SWD header pins and warns about them.
 +
 +adapter driver bcm2835gpio
 +transport select jtag
@@ -119,7 +126,6 @@ index 0000000..2859689
 +adapter gpio tms -chip 0 17
 +adapter gpio tdi -chip 0 27
 +adapter gpio tdo -chip 0 22
-+adapter gpio srst -chip 0 24
 +
 +adapter speed 1000
 +reset_config none
@@ -203,37 +209,39 @@ index 0000000..84cab87
 +source [find cpld/xilinx-xc7.cfg]
 diff --git a/tcl/board/netv2-rpi-spiflash.cfg b/tcl/board/netv2-rpi-spiflash.cfg
 new file mode 100644
-index 0000000..fee3fc9
+index 0000000..e8c33f1
 --- /dev/null
 +++ b/tcl/board/netv2-rpi-spiflash.cfg
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,26 @@
 +# SPDX-License-Identifier: GPL-2.0-or-later
 +
 +# Kosagi NeTV2 on a Raspberry Pi header: the FPGA's SPI configuration flash,
 +# reached through a bscan_spi proxy bitstream loaded into the FPGA (jtagspi).
 +#
 +# Loading the proxy replaces whatever design is running until the FPGA is
-+# reconfigured from flash again (`virtex2 refresh xc7.pld`, or a power cycle).
++# reconfigured from flash again (`xc7_program xc7.tap`, or a power cycle).
 +# The proxy bitstream must match the FPGA variant: bscan_spi_xc7a35t.bit or
 +# bscan_spi_xc7a100t.bit from https://github.com/quartiq/bscan_spi_bitstreams.
++#
++# OpenOCD 0.12.0 addresses PLD devices by index (this board has one, 0).
 +#
 +#   openocd -f board/netv2-rpi-spiflash.cfg -c init \
 +#       -c "netv2_spi_init bscan_spi_xc7a100t.bit" \
 +#       -c "flash info 0" -c shutdown
 +#
 +#   ... -c "netv2_spi_init bscan_spi_xc7a100t.bit" \
-+#       -c "jtagspi_program design.bin 0" -c "virtex2 refresh xc7.pld" -c shutdown
++#       -c "jtagspi_program design.bin 0" -c "xc7_program xc7.tap" -c shutdown
 +
 +source [find board/netv2-rpi.cfg]
 +source [find cpld/jtagspi.cfg]
 +
 +# Load the proxy bitstream into the FPGA and probe the flash behind it.
 +proc netv2_spi_init {proxy_bit} {
-+	jtagspi_init xc7.pld $proxy_bit
++	jtagspi_init 0 $proxy_bit
 +}
 diff --git a/tcl/board/netv2-rpi.cfg b/tcl/board/netv2-rpi.cfg
 new file mode 100644
-index 0000000..573fa97
+index 0000000..0618e1b
 --- /dev/null
 +++ b/tcl/board/netv2-rpi.cfg
 @@ -0,0 +1,29 @@
@@ -242,13 +250,13 @@ index 0000000..573fa97
 +# Kosagi NeTV2 on a Raspberry Pi header: pick the fastest adapter this Pi
 +# can offer and load the matching board file.
 +#
-+#   /dev/pio0 present (Pi 5 with the rp1-pio module)  -> netv2-rpi-rp1pio.cfg
-+#   any other Pi 5                                     -> netv2-rpi-linuxgpiod.cfg
-+#   Pi 1-4 / Zero                                      -> netv2-rpi-bcm2835gpio.cfg
++#   /dev/pio0 present (Pi 5 / CM5 with the rp1-pio module) -> netv2-rpi-rp1pio.cfg
++#   any other BCM2712 (Pi 5 / CM5)                          -> netv2-rpi-linuxgpiod.cfg
++#   Pi 1-4 / Zero / CM1-4                                   -> netv2-rpi-bcm2835gpio.cfg
 +#
 +# Each of those files documents the wiring; all three use the same pins.
 +#
-+#   openocd -f board/netv2-rpi.cfg -c init -c "pld load xc7.pld design.bit" -c shutdown
++#   openocd -f board/netv2-rpi.cfg -c init -c "pld load 0 design.bit" -c shutdown
 +
 +proc netv2_read_file { name } {
 +	if {[catch {open $name r} fd]} {
@@ -261,8 +269,49 @@ index 0000000..573fa97
 +
 +if {[file exists /dev/pio0]} {
 +	source [find board/netv2-rpi-rp1pio.cfg]
-+} elseif {[string match "Raspberry Pi 5*" [netv2_read_file /proc/device-tree/model]]} {
++} elseif {[string match *bcm2712* [netv2_read_file /proc/device-tree/compatible]]} {
 +	source [find board/netv2-rpi-linuxgpiod.cfg]
 +} else {
 +	source [find board/netv2-rpi-bcm2835gpio.cfg]
++}
+diff --git a/tcl/fpga/lattice-ecp5-traceid.cfg b/tcl/fpga/lattice-ecp5-traceid.cfg
+new file mode 100644
+index 0000000..2ec0089
+--- /dev/null
++++ b/tcl/fpga/lattice-ecp5-traceid.cfg
+@@ -0,0 +1,35 @@
++# SPDX-License-Identifier: GPL-2.0-or-later
++
++# Lattice ECP5 TraceID: the die-level unique identifier an ECP5 carries
++# where a Xilinx device has its Device DNA (see fpga/xilinx-dna.cfg).
++#
++# Read with UIDCODE_PUB (0x19) shifted into the 8-bit instruction register
++# and 64 bits shifted out of the data register. It is a public instruction:
++# reading it does not disturb a configured device (ecpdap's read_uid() issues
++# it with no ISC_ENABLE). Of the 64 bits the top 8 are the design's own,
++# set from the bitstream's TRACE_ID_BINARY preference; only the bottom 56
++# bits are programmed at the factory, so anything that names a board after
++# its TraceID should use the masked value this proc returns.
++#
++# Sequence as in Lattice TN1260 (ECP5 sysCONFIG) and the same read as
++# rpi-hwid's fpga.py and ecpdap. Not yet checked against hardware through
++# OpenOCD: the ECP5 used to write this was reached through its Apollo
++# debug controller, not a JTAG adapter OpenOCD drives.
++#
++#   source [find fpga/lattice_ecp5.cfg]
++#   init
++#   ecp5_read_traceid ecp5.tap
++
++proc ecp5_read_traceid {tap} {
++	set UIDCODE_PUB 0x19
++	jtag arp_init
++	irscan $tap $UIDCODE_PUB
++	scan [drscan $tap 32 0 32 0] "%08x %08x" lo hi
++	set raw [expr {($hi << 32) | $lo}]
++	set traceid [expr {$raw & 0x00ffffffffffffff}]
++	if {$traceid == 0 || $traceid == 0x00ffffffffffffff} {
++		error "ecp5_read_traceid: chain shifted all zeros or all ones (device absent or unpowered)"
++	}
++	echo [format "TraceID = 0x%014x (raw 0x%016x)" $traceid $raw]
++	return $traceid
 +}

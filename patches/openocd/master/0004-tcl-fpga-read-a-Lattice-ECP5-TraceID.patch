@@ -1,63 +1,63 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim Ansell <me@mith.ro>
-Date: Tue, 22 Sep 2026 11:48:01 +0930
+Date: Tue, 22 Sep 2026 12:38:39 +0930
 Subject: [PATCH 4/4] tcl/fpga: read a Lattice ECP5 TraceID
 
 fpga/xilinx-dna.cfg reads the Device DNA a Xilinx part carries; an ECP5
 has a 64-bit TraceID in the same role, read with the public UIDCODE_PUB
-(0x19) instruction and a 64-bit DR scan, no ISC_ENABLE needed. Only the
-low 56 bits are factory programmed; the top 8 come from the bitstream's
-TRACE_ID_BINARY preference, so ecp5_read_traceid returns the masked value
-and prints both.
+(0x19) instruction and a 64-bit DR scan, no ISC_ENABLE needed, as
+ecpdap's read_uid() does. Bits arrive least significant first, so the
+halves are assembled lo then hi with no reversal (the Xilinx DNA is the
+other way round). Only the low 56 bits are factory programmed; the top 8
+come from the bitstream's TRACE_ID_BINARY preference (Lattice TN1260),
+so ecp5_read_traceid returns the masked value and prints both.
 
 Refuses an all-zero or all-one shift, which is an absent or unpowered
-chain rather than an identifier. Sequence from Lattice TN1260 and from
-ecpdap's read_uid(); the same read is what rpi-hwid performs through a
-Cynthion's Apollo controller. Not yet exercised through an OpenOCD
+chain rather than an identifier. Not yet exercised through an OpenOCD
 adapter, which the file header says.
 ---
- tcl/fpga/lattice-ecp5-traceid.cfg | 35 +++++++++++++++++++++++++++++++
- 1 file changed, 35 insertions(+)
- create mode 100644 tcl/fpga/lattice-ecp5-traceid.cfg
+ tcl/fpga/lattice-ecp5-traceid.cfg | 23 ++++++++++++-----------
+ 1 file changed, 12 insertions(+), 11 deletions(-)
 
 diff --git a/tcl/fpga/lattice-ecp5-traceid.cfg b/tcl/fpga/lattice-ecp5-traceid.cfg
-new file mode 100644
-index 0000000..2ec0089
---- /dev/null
+index 2ec0089..bf7a9c2 100644
+--- a/tcl/fpga/lattice-ecp5-traceid.cfg
 +++ b/tcl/fpga/lattice-ecp5-traceid.cfg
-@@ -0,0 +1,35 @@
-+# SPDX-License-Identifier: GPL-2.0-or-later
-+
-+# Lattice ECP5 TraceID: the die-level unique identifier an ECP5 carries
-+# where a Xilinx device has its Device DNA (see fpga/xilinx-dna.cfg).
+@@ -4,17 +4,19 @@
+ # where a Xilinx device has its Device DNA (see fpga/xilinx-dna.cfg).
+ #
+ # Read with UIDCODE_PUB (0x19) shifted into the 8-bit instruction register
+-# and 64 bits shifted out of the data register. It is a public instruction:
+-# reading it does not disturb a configured device (ecpdap's read_uid() issues
+-# it with no ISC_ENABLE). Of the 64 bits the top 8 are the design's own,
+-# set from the bitstream's TRACE_ID_BINARY preference; only the bottom 56
+-# bits are programmed at the factory, so anything that names a board after
+-# its TraceID should use the masked value this proc returns.
++# and 64 bits shifted out of the data register, the sequence ecpdap's
++# read_uid() performs (public instruction: it does not disturb a configured
++# device and needs no ISC_ENABLE). Bits arrive least significant first, so
++# the two 32-bit halves are assembled lo then hi with no bit reversal,
++# unlike the Xilinx DNA which shifts out most significant bit first.
+ #
+-# Sequence as in Lattice TN1260 (ECP5 sysCONFIG) and the same read as
+-# rpi-hwid's fpga.py and ecpdap. Not yet checked against hardware through
+-# OpenOCD: the ECP5 used to write this was reached through its Apollo
+-# debug controller, not a JTAG adapter OpenOCD drives.
++# Per Lattice TN1260 (ECP5 sysCONFIG) the top 8 bits of the 64 are the
++# design's own, set from the bitstream's TRACE_ID_BINARY preference; only
++# the bottom 56 are programmed at the factory, so anything that names a
++# board after its TraceID should use the masked value this proc returns.
 +#
-+# Read with UIDCODE_PUB (0x19) shifted into the 8-bit instruction register
-+# and 64 bits shifted out of the data register. It is a public instruction:
-+# reading it does not disturb a configured device (ecpdap's read_uid() issues
-+# it with no ISC_ENABLE). Of the 64 bits the top 8 are the design's own,
-+# set from the bitstream's TRACE_ID_BINARY preference; only the bottom 56
-+# bits are programmed at the factory, so anything that names a board after
-+# its TraceID should use the masked value this proc returns.
-+#
-+# Sequence as in Lattice TN1260 (ECP5 sysCONFIG) and the same read as
-+# rpi-hwid's fpga.py and ecpdap. Not yet checked against hardware through
-+# OpenOCD: the ECP5 used to write this was reached through its Apollo
-+# debug controller, not a JTAG adapter OpenOCD drives.
-+#
-+#   source [find fpga/lattice_ecp5.cfg]
-+#   init
-+#   ecp5_read_traceid ecp5.tap
-+
-+proc ecp5_read_traceid {tap} {
-+	set UIDCODE_PUB 0x19
-+	jtag arp_init
-+	irscan $tap $UIDCODE_PUB
-+	scan [drscan $tap 32 0 32 0] "%08x %08x" lo hi
-+	set raw [expr {($hi << 32) | $lo}]
-+	set traceid [expr {$raw & 0x00ffffffffffffff}]
-+	if {$traceid == 0 || $traceid == 0x00ffffffffffffff} {
-+		error "ecp5_read_traceid: chain shifted all zeros or all ones (device absent or unpowered)"
-+	}
-+	echo [format "TraceID = 0x%014x (raw 0x%016x)" $traceid $raw]
-+	return $traceid
-+}
++# Not yet exercised through an OpenOCD adapter: the ECP5 used while
++# writing this was reached through its Apollo debug controller.
+ #
+ #   source [find fpga/lattice_ecp5.cfg]
+ #   init
+@@ -22,7 +24,6 @@
+ 
+ proc ecp5_read_traceid {tap} {
+ 	set UIDCODE_PUB 0x19
+-	jtag arp_init
+ 	irscan $tap $UIDCODE_PUB
+ 	scan [drscan $tap 32 0 32 0] "%08x %08x" lo hi
+ 	set raw [expr {($hi << 32) | $lo}]
