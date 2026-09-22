@@ -45,9 +45,12 @@ gpiodflag=$("$REPO/packaging/linuxgpiod-flag.sh" "$src")
 	--enable-internal-jimtcl --disable-internal-libjaylink --disable-shared --enable-static \
 	--enable-rp1-pio-jtag --enable-bcm2835gpio "$gpiodflag" --enable-sysfsgpio \
 	--enable-remote-bitbang \
-	--disable-doxygen-html --disable-doxygen-pdf --disable-werror \
-	LDFLAGS="-static"
-make -j"$(nproc)"
+	--disable-doxygen-html --disable-doxygen-pdf --disable-werror
+# OpenOCD links through libtool, which drops a plain -static when linking
+# a program; -all-static is libtool's spelling for "pass -static to the
+# compiler". It goes on the make line, not configure's, because configure's
+# own test links call gcc directly and gcc does not know -all-static.
+make -j"$(nproc)" LDFLAGS="-all-static"
 
 bin=$src/src/openocd
 static_assert_static "$bin"
