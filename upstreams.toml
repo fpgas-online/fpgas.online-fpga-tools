@@ -1,0 +1,51 @@
+# Every external input of the build, pinned by commit.
+#
+# `fpgatools bump` rewrites the [*.master] entries (and the stable ref when a
+# newer upstream release tag appears); humans review the resulting pull
+# request. Builds never look at a moving branch name: fpgatools fetches the
+# commit hash directly, so a build is reproducible from this file alone.
+#
+# describe/date on the master entries feed the +git<date>.<sha7> part of the
+# package version (see fpgatools/version.py); recording them here means the
+# build does not need upstream history, only the one commit.
+
+[openfpgaloader]
+url = "https://github.com/trabucayre/openFPGALoader.git"
+
+[openfpgaloader.stable]
+ref = "v1.1.1"
+commit = "85be4fa02b2dd6a83716d7dfac3d25bbd260ff7b"
+
+[openfpgaloader.master]
+ref = "master"
+commit = "24e46d13bb8f2bc9371e9ca8443ece2fafc4b20d"
+describe = "v1.1.1-173-g24e46d1"
+date = "2026-09-15"
+
+[openocd]
+url = "https://github.com/openocd-org/openocd.git"
+
+[openocd.stable]
+ref = "v0.12.0"
+commit = "9ea7f3d647c8ecf6b0f1424002dfc3f4504a162c"
+
+[openocd.master]
+ref = "master"
+commit = "b04ccfeff73fb01b62e52e3d95882e8ff426016d"
+describe = "v0.12.0-1701-gb04ccfef"
+date = "2026-09-20"
+
+# librp1jtag: the RP1 PIO JTAG library both tools' rp1pio drivers call.
+# Built from source and linked statically into every binary.
+[rp1jtag]
+url = "https://github.com/mithro/rp1-jtag.git"
+ref = "main"
+commit = "d9d7d8d186f103bb16a3eafb9c7296d5e2a33c47"
+
+# PIOLib from raspberrypi/utils: librp1jtag's /dev/pio0 backend. Debian does
+# not package it. Only the piolib/ subdirectory is built.
+[piolib]
+url = "https://github.com/raspberrypi/utils.git"
+ref = "master"
+commit = "ebc4a56bac3a896d5c14e56fe27dcd6cb36dd373"
+subdir = "piolib"

@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 16 Mar 2026 17:46:27 +1030
+Subject: [PATCH 18/24] tt_fpga: add board and cable definitions for TT FPGA
+ Demo Board
+
+Add COMM_TT_MICROPYTHON communication mode, TT_BOARD() macro, and
+tt_fpga board entry to board.hpp. Add MODE_TT_MICROPYTHON enum value
+and tt_micropython cable entry to cable.hpp.
+
+Both entries are guarded by #ifdef ENABLE_TT_MICROPYTHON.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+---
+ src/board.hpp | 12 +++++++++---
+ src/cable.hpp |  4 ++++
+ 2 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/src/board.hpp b/src/board.hpp
+index 1b7e89c..a4b229d 100644
+--- a/src/board.hpp
++++ b/src/board.hpp
+@@ -64,9 +64,10 @@ typedef struct {
+ } spi_pins_conf_t;
+ 
+ enum {
+-	COMM_JTAG = (1 << 0),
+-	COMM_SPI  = (1 << 1),
+-	COMM_DFU  = (1 << 2),
++	COMM_JTAG           = (1 << 0),
++	COMM_SPI            = (1 << 1),
++	COMM_DFU            = (1 << 2),
++	COMM_TT_MICROPYTHON = (1 << 3),
+ };
+ 
+ enum {
+@@ -108,6 +109,8 @@ typedef struct {
+ 		{_cs, _sck, _so, _si, _holdn, _wpn}, _freq, 0, 0, -1}}
+ #define DFU_BOARD(_name, _fpga_part, _cable, _vid, _pid, _alt) \
+ 	{_name, {"", _cable, _fpga_part, 0, 0, 0, COMM_DFU, SPI_FLASH, {}, {}, 0, _vid, _pid, _alt}}
++#define TT_BOARD(_name, _cable) \
++	{_name, {"", _cable, "ice40up5k", 0, 0, 0, COMM_TT_MICROPYTHON, SPI_FLASH, {}, {}, 0, 0, 0, -1}}
+ 
+ static std::map <std::string, target_board_t> board_list = {
+ 	JTAG_BOARD("ac701",           "xc7a200tfbg676",       "digilent",     SPI_FLASH, 0, 0, CABLE_DEFAULT),
+@@ -249,6 +252,9 @@ static std::map <std::string, target_board_t> board_list = {
+ 	JTAG_BOARD("tangprimer25k",   "",                     "ft2232",       SPI_FLASH, 0, 0, CABLE_DEFAULT),
+ 	JTAG_BOARD("tangmega138k",    "",                     "ft2232",       SPI_FLASH, 0, 0, CABLE_DEFAULT),
+ 	JTAG_BOARD("te0712_8",        "xc7a200tfbg484",       "",             SPI_FLASH, 0, 0, CABLE_MHZ(15)),
++#ifdef ENABLE_TT_MICROPYTHON
++	TT_BOARD("tt_fpga",           "tt_micropython"),
++#endif
+ 	JTAG_BOARD("tec0117",         "",                     "ft2232",       SPI_FLASH, 0, 0, CABLE_DEFAULT),
+ 	JTAG_BOARD("tec0330",         "xc7vx330tffg1157",     "",             SPI_FLASH, 0, 0, CABLE_MHZ(15)),
+ 	SPI_BOARD("titanium_ti60_f225","efinix", "titanium", "efinix_spi_ft4232",
+diff --git a/src/cable.hpp b/src/cable.hpp
+index 149b8ab..885e71b 100644
+--- a/src/cable.hpp
++++ b/src/cable.hpp
+@@ -31,6 +31,7 @@ enum communication_type {
+ 	MODE_GWU2X,            /*! Gowin GWU2X JTAG mode */
+ 	MODE_ESP,              /*! esp32c3, esp32s3 */
+ 	MODE_RP1_PIO,          /*! Raspberry Pi 5 RP1 PIO JTAG (librp1jtag) */
++	MODE_TT_MICROPYTHON,   /*! TinyTapeout MicroPython raw REPL */
+ };
+ 
+ /*!
+@@ -138,6 +139,9 @@ static std::map <std::string, cable_t> cable_list = {
+ 	{"usb-blasterII_1",    CABLE_DEF(MODE_USBBLASTER, 0x09Fb, 0x6010                   )},
+ 	{"usb-blasterIII",     FTDI_SER(0x09fb, 0x6022, FTDI_INTF_A, 0x08, 0x3B, 0x00, 0x00)},
+ 	{"xvc-client",         CABLE_DEF(MODE_XVC_CLIENT, 0x0000, 0x0000                   )},
++#ifdef ENABLE_TT_MICROPYTHON
++	{"tt_micropython",     CABLE_DEF(MODE_TT_MICROPYTHON, 0x2E8A, 0x0005               )},
++#endif
+ #ifdef ENABLE_RP1_PIO
+ 	{"rp1pio",             CABLE_DEF(MODE_RP1_PIO, 0, 0x0000                        )},
+ #endif

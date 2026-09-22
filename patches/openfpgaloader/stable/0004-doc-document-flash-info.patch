@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 21 Sep 2026 16:09:11 +0930
+Subject: [PATCH 04/24] doc: document --flash-info
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ doc/guide/advanced.rst | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/doc/guide/advanced.rst b/doc/guide/advanced.rst
+index 5e81002..7a907d0 100644
+--- a/doc/guide/advanced.rst
++++ b/doc/guide/advanced.rst
+@@ -83,6 +83,25 @@ Writing to an arbitrary address in flash memory
+ With FPGA using an external SPI flash (*xilinx*, *lattice ECP5/nexus/ice40*, *anlogic*, *efinix*) option ``-o`` allows
+ one to write raw binary file to an arbitrary adress in FLASH.
+ 
++Display detailed SPI flash information
++======================================
++
++``--flash-info`` works like ``--detect -f`` but also displays:
++
++* manufacturer, part name and size (from the internal database, SFDP or the JEDEC ID),
++* factory programmed unique ID / serial number when the manufacturer provides one
++  (Winbond, GigaDevice, ISSI, Puya, Micron N25Q/MT25Q, Infineon S25FL-L, SST26),
++* the JEDEC SFDP (JESD216) content: supported read modes (1-1-2, 1-2-2, 2-2-2,
++  1-1-4, 1-4-4, 4-4-4) with opcodes and dummy clocks, DTR (DDR) support,
++  4-Byte address and DTR read instructions, erase types, page size and
++  quad enable method.
++
++.. code-block:: bash
++
++    openFPGALoader -b arty --flash-info
++
++Only read-only commands are sent to the flash.
++
+ Detect/read/write on primary/secondary flash memories
+ =====================================================
+ 

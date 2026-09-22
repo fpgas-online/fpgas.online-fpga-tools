@@ -1,0 +1,194 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 21 Sep 2026 19:25:22 +0930
+Subject: [PATCH 12/24] spiFlash: Macronix factory ESN, and say why there is
+ none
+
+Macronix has no unique ID command: a 128-bit ESN is only programmed in
+the secured OTP (0x00-0x0F) on "special order", and security register
+bit 0 then reads 1 (Macronix AN0218). Read the security register
+(RDSCUR 0x2B, a plain read); when factory locked, read the ESN between
+ENSO (0xB1) and EXSO (0xC1), always leaving the secured OTP mode.
+Otherwise report why there is no unique ID, with the register value,
+instead of "unsupported" (new unique_id.note JSON field).
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ doc/guide/advanced.rst |  7 +++--
+ src/spiFlash.cpp       | 65 ++++++++++++++++++++++++++++++++++++++++--
+ src/spiFlash.hpp       |  7 ++++-
+ 3 files changed, 73 insertions(+), 6 deletions(-)
+
+diff --git a/doc/guide/advanced.rst b/doc/guide/advanced.rst
+index 6efab2b..4513504 100644
+--- a/doc/guide/advanced.rst
++++ b/doc/guide/advanced.rst
+@@ -91,7 +91,9 @@ Display detailed SPI flash information
+ * manufacturer, part name and size (from the internal database, SFDP or the JEDEC ID),
+ * factory programmed unique ID / serial number when the manufacturer provides one
+   (Winbond, GigaDevice, ISSI, Puya, Micron N25Q/MT25Q, Spansion S25FL128S/256S,
+-  Infineon S25FL-L, SST26),
++  Infineon S25FL-L, SST26, and Macronix when its secured OTP holds a factory
++  programmed ESN: most Macronix parts ship without one, and the report then
++  says so, from the security register),
+ * the JEDEC SFDP (JESD216) content: supported read modes (1-1-2, 1-2-2, 2-2-2,
+   1-1-4, 1-4-4, 4-4-4) with opcodes and dummy clocks, DTR (DDR) support,
+   4-Byte address and DTR read instructions, erase types, page size and
+@@ -127,7 +129,8 @@ file and a zero exit status mean the content was read:
+ ``flashes`` has one entry per flash (two with ``--target-flash both``).
+ ``unique_id.state`` is ``read``, ``blank`` (read, all ``0x00``/``0xFF``) or
+ ``none`` (no known unique ID command for this part); a failed unique ID read
+-is an error. ``sfdp`` is ``null`` without SFDP, otherwise it holds the tables,
++is an error. ``unique_id.note`` explains a ``none`` when the reason is known
++(ie a Macronix part without factory ESN), otherwise it is ``null``. ``sfdp`` is ``null`` without SFDP, otherwise it holds the tables,
+ ``bfpt`` (density, address mode, DTR, page size, read modes with opcode and
+ mode/dummy clocks, erase types, quad enable) and ``read_4byte``.
+ 
+diff --git a/src/spiFlash.cpp b/src/spiFlash.cpp
+index b59a893..c40c32b 100644
+--- a/src/spiFlash.cpp
++++ b/src/spiFlash.cpp
+@@ -56,6 +56,11 @@
+ #define FLASH_RDSFDP   0x5A
+ /* read security ID (SST26): 2B addr + 8 clk cycle */
+ #define FLASH_RSID     0x88
++/* Macronix secured OTP: read security register, enter/exit secured OTP */
++#define MX_RDSCUR      0x2B
++#	define MX_RDSCUR_FACTORY_LOCK (0x01)
++#define MX_ENSO        0xB1
++#define MX_EXSO        0xC1
+ /* block (32Kb) erase */
+ #define FLASH_BE32     0x52
+ /* block (32Kb) erase with 4-byte address */
+@@ -718,8 +723,49 @@ bool SPIFlash::read_sfdp(uint32_t addr, uint8_t *data, uint32_t len)
+ 
+ std::vector<std::string> SPIFlash::_info_json_records;
+ 
++/* Macronix factory ESN: see read_unique_id() */
++SPIFlash::uid_state_t SPIFlash::read_macronix_esn(std::vector<uint8_t> &uid,
++		uint8_t &opcode, std::string &note)
++{
++	uint8_t scur;
++	if (_spi->spi_put(MX_RDSCUR, NULL, &scur, 1) != 0)
++		throw std::runtime_error("Security register read failed");
++	/* all ones: nothing answered (reserved bits are never all set) */
++	if (scur == 0xff)
++		throw std::runtime_error("Security register read failed (0xff)");
++
++	char buf[96];
++	if (!(scur & MX_RDSCUR_FACTORY_LOCK)) {
++		snprintf(buf, sizeof(buf), "no factory ESN: security register "
++				"0x%02x, bit 0 (factory lock) = 0", scur);
++		note = buf;
++		return UID_NONE;
++	}
++
++	/* factory locked: ESN is secured OTP 0x00-0x0F. Always leave the
++	 * secured OTP mode: the main array is not accessible inside it.
++	 */
++	opcode = MX_ENSO;
++	uint8_t tx[3 + 16] = {0}, rx[3 + 16];
++	int ret = _spi->spi_put(MX_ENSO, NULL, NULL, 0);
++	if (ret == 0)
++		ret = _spi->spi_put(FLASH_READ, tx, rx, sizeof(tx));
++	const int ret_exit = _spi->spi_put(MX_EXSO, NULL, NULL, 0);
++	if (ret != 0 || ret_exit != 0)
++		throw std::runtime_error("Secured OTP (ESN) read failed");
++
++	uid.assign(rx + 3, rx + sizeof(rx));
++	note = "factory ESN in secured OTP";
++	bool all_00 = true, all_ff = true;
++	for (auto b : uid) {
++		all_00 &= (b == 0x00);
++		all_ff &= (b == 0xff);
++	}
++	return (all_00 || all_ff) ? UID_BLANK : UID_READ;
++}
++
+ SPIFlash::uid_state_t SPIFlash::read_unique_id(std::vector<uint8_t> &uid,
+-		uint8_t &opcode)
++		uint8_t &opcode, std::string &note)
+ {
+ 	const uint8_t mfr = (_jedec_id >> 24) & 0xff;
+ 	const uint8_t mem_type = (_jedec_id >> 16) & 0xff;
+@@ -729,6 +775,7 @@ SPIFlash::uid_state_t SPIFlash::read_unique_id(std::vector<uint8_t> &uid,
+ 
+ 	opcode = 0;
+ 	uid.clear();
++	note.clear();
+ 
+ 	/* only read-only commands, and only when the vendor/family is known:
+ 	 * the same opcode may have another meaning on other devices
+@@ -767,6 +814,13 @@ SPIFlash::uid_state_t SPIFlash::read_unique_id(std::vector<uint8_t> &uid,
+ 				return UID_NONE;
+ 			}
+ 			break;
++		case 0xC2:
++			/* Macronix: no unique ID command. A 128-bit ESN is only
++			 * programmed in the secured OTP (0x00-0x0F) on "special
++			 * order", then security register bit 0 is set (factory lock)
++			 * (Macronix AN0218, Serial Flash Secured OTP Area Introduction)
++			 */
++			return read_macronix_esn(uid, opcode, note);
+ 		case 0xBF:  /* SST26: Security ID 0x88, 2 addr + 1 dummy, 64 bits */
+ 			if (mem_type != 0x26)
+ 				return UID_NONE;
+@@ -878,7 +932,8 @@ void SPIFlash::display_info()
+ 
+ 	std::vector<uint8_t> uid;
+ 	uint8_t uid_opcode;
+-	const uid_state_t uid_state = read_unique_id(uid, uid_opcode);
++	std::string uid_note;
++	const uid_state_t uid_state = read_unique_id(uid, uid_opcode, uid_note);
+ 	std::string uid_hex;
+ 	for (auto b : uid) {
+ 		char buf[4];
+@@ -891,6 +946,8 @@ void SPIFlash::display_info()
+ 	} else if (uid_state == UID_BLANK) {
+ 		printf("Unique ID         : blank (opcode 0x%02X, %zu bits returned "
+ 				"all 0x00/0xFF)\n", uid_opcode, uid.size() * 8);
++	} else if (!uid_note.empty()) {
++		printf("Unique ID         : not available (%s)\n", uid_note.c_str());
+ 	} else {
+ 		printf("Unique ID         : not available (unsupported for "
+ 				"this manufacturer/part)\n");
+@@ -926,7 +983,9 @@ void SPIFlash::display_info()
+ 		", \"bits\": " + (uid_state == UID_NONE ? std::string("null") :
+ 				std::to_string(uid.size() * 8)) +
+ 		", \"opcode\": " + (uid_state == UID_NONE ? std::string("null") :
+-				json_hex(uid_opcode, 2)) + "}";
++				json_hex(uid_opcode, 2)) +
++		", \"note\": " + (uid_note.empty() ? std::string("null") :
++				json_string(uid_note)) + "}";
+ 	j += ", \"sfdp\": " + sfdp.to_json(mfr) + "}";
+ 	_info_json_records.push_back(j);
+ }
+diff --git a/src/spiFlash.hpp b/src/spiFlash.hpp
+index 7c495ba..1cc5c09 100644
+--- a/src/spiFlash.hpp
++++ b/src/spiFlash.hpp
+@@ -156,10 +156,13 @@ class SPIFlash {
+ 		 * \brief read factory programmed unique ID (vendor specific)
+ 		 * \param[out] uid: unique ID (as read, also when blank)
+ 		 * \param[out] opcode: command used to read uid (0 when UID_NONE)
++		 * \param[out] note: why there is no unique ID, when known
++		 *             (ie Macronix part without factory ESN), or empty
+ 		 * \return UID_NONE, UID_BLANK or UID_READ
+ 		 * \throw std::runtime_error when the read itself fails
+ 		 */
+-		uid_state_t read_unique_id(std::vector<uint8_t> &uid, uint8_t &opcode);
++		uid_state_t read_unique_id(std::vector<uint8_t> &uid, uint8_t &opcode,
++				std::string &note);
+ 		/*!
+ 		 * \brief JSON records (one per flash) built by display_info()
+ 		 *        since the start of the program
+@@ -197,6 +200,8 @@ class SPIFlash {
+ 
+ 	private:
+ 		bool prepare_flash(const int base_addr, const int len);
++		uid_state_t read_macronix_esn(std::vector<uint8_t> &uid,
++				uint8_t &opcode, std::string &note);
+ 
+ 	public:
+ 		/*!

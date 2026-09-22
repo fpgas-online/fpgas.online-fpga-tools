@@ -1,0 +1,44 @@
+Source: @PACKAGE@
+Section: embedded
+Priority: optional
+Maintainer: Tim 'mithro' Ansell <me@mith.ro>
+Build-Depends: debhelper-compat (= 13),
+               autoconf,
+               automake,
+               libtool,
+               pkg-config,
+               texinfo,
+               libusb-1.0-0-dev,
+               libftdi1-dev,
+               libhidapi-dev,
+               libjaylink-dev,
+               libgpiod-dev,
+               libcapstone-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/fpgas-online/fpgas.online-fpga-tools
+Vcs-Git: https://github.com/fpgas-online/fpgas.online-fpga-tools.git
+Vcs-Browser: https://github.com/fpgas-online/fpgas.online-fpga-tools
+
+Package: @PACKAGE@
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Provides: openocd
+Conflicts: openocd, openocd-rp1pio, @CONFLICTS@
+Replaces: openocd, openocd-rp1pio, @CONFLICTS@
+Description: OpenOCD with the fpgas.online patch series (@TRACK@)
+ OpenOCD is the Open On-Chip Debugger: JTAG/SWD debugging, flashing and
+ boundary-scan for embedded targets and FPGAs. This is the fpgas.online
+ build of upstream @UPSTREAM_REF@ (commit @UPSTREAM_COMMIT@) plus a patch
+ series that is not yet upstream:
+  * rp1_pio_jtag adapter: JTAG through the Raspberry Pi 5 RP1 PIO block
+    (librp1jtag, linked in statically) instead of bit-banging
+    PCIe-attached GPIOs;
+  * board/netv2-rpi*.cfg: the Kosagi NeTV2 on a Raspberry Pi header via
+    bcm2835gpio (Pi 1-4), rp1_pio_jtag (Pi 5) or linuxgpiod, with a
+    picker and a jtagspi configuration-flash variant;
+  * fpga/lattice-ecp5-traceid.cfg: ECP5 TraceID read, next to upstream's
+    fpga/xilinx-dna.cfg Device DNA read.
+ .
+ It installs /usr/bin/openocd and /usr/share/openocd in place of Debian's
+ openocd package. The version @VERSION@ names the upstream base first and
+ the fpgas.online patch-set revision after "+fpgasonline.".

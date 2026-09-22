@@ -1,0 +1,75 @@
+name: CI
+
+# Fast checks on every push and pull request: the Python tooling, every patch
+# series applying to its pinned upstream, and a native amd64 Debian build of
+# each tool/track (the real deb + static builds for arm run in debs.yml and
+# static.yml; this one exists to fail fast on a compile error).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tooling:
+    name: fpgatools (ruff, pytest, shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # fpgatools version needs the series tags
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --quiet
+      - run: uv run ruff check
+      - run: uv run pytest -q
+      - run: shellcheck packaging/*.sh packaging/static/*.sh
+      - name: Version strings for this commit
+        run: |
+          for tool in openfpgaloader openocd; do
+            for track in stable master; do
+              echo "$tool/$track: $(uv run fpgatools version $tool $track)"
+            done
+          done
+
+  apply:
+    name: apply ${{ matrix.tool }}/${{ matrix.track }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [openfpgaloader, openocd]
+        track: [stable, master]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --quiet
+      - name: Fetch the pinned upstream and apply the series
+        run: uv run fpgatools apply ${{ matrix.tool }} ${{ matrix.track }}
+      - name: Both tracks carry the same series
+        run: uv run fpgatools compare ${{ matrix.tool }}
+
+  deb-amd64:
+    name: deb check ${{ matrix.tool }}/${{ matrix.track }} (trixie amd64)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [openfpgaloader, openocd]
+        track: [stable, master]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build and install the package in debian:trixie
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work \
+            debian:trixie sh -ec 'packaging/build-deb.sh ${{ matrix.tool }} ${{ matrix.track }}'
+      # Named so the apt publish step (pattern debs-*) never picks these up.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: check-amd64-${{ matrix.tool }}-${{ matrix.track }}
+          path: built-debs/*.deb
+          if-no-files-found: error

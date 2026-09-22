@@ -1,0 +1,370 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 21 Sep 2026 16:09:11 +0930
+Subject: [PATCH 03/24] main: add --flash-info option
+
+--flash-info behaves like --detect -f and additionally calls
+SPIFlash::display_info(). A full_info flag is passed through
+Device::detect_flash() to every implementation (JTAG bridge and
+SPI mode), and the direct SPI flash mode also honours it.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ src/altera.hpp       |  4 ++--
+ src/colognechip.cpp  |  4 +++-
+ src/colognechip.hpp  |  2 +-
+ src/device.hpp       |  8 +++++++-
+ src/efinix.cpp       |  6 +++---
+ src/efinix.hpp       |  2 +-
+ src/gowin.hpp        |  4 ++--
+ src/ice40.cpp        |  4 +++-
+ src/ice40.hpp        |  2 +-
+ src/lattice.hpp      |  4 ++--
+ src/main.cpp         | 27 +++++++++++++++++++++------
+ src/spiInterface.cpp |  4 +++-
+ src/spiInterface.hpp |  2 +-
+ src/xilinx.cpp       |  6 +++---
+ src/xilinx.hpp       |  2 +-
+ 15 files changed, 54 insertions(+), 27 deletions(-)
+
+diff --git a/src/altera.hpp b/src/altera.hpp
+index 82a7bb7..c0bd412 100644
+--- a/src/altera.hpp
++++ b/src/altera.hpp
+@@ -52,8 +52,8 @@ class Altera: public Device, SPIInterface {
+ 		/*!
+ 		 * \brief display SPI flash ID and status register
+ 		 */
+-		bool detect_flash() override {
+-			return SPIInterface::detect_flash();
++		bool detect_flash(bool full_info) override {
++			return SPIInterface::detect_flash(full_info);
+ 		}
+ 		/*!
+ 		 * \brief protect SPI flash blocks
+diff --git a/src/colognechip.cpp b/src/colognechip.cpp
+index 2f3bdfe..5b94b67 100644
+--- a/src/colognechip.cpp
++++ b/src/colognechip.cpp
+@@ -178,7 +178,7 @@ bool CologneChip::post_flash_access()
+ /**
+  * Dump flash contents to file. Works in both SPI and JTAG-SPI-bypass mode.
+  */
+-bool CologneChip::detect_flash()
++bool CologneChip::detect_flash(bool full_info)
+ {
+ 	/* prepare SPI access */
+ 	prepare_flash_access();
+@@ -189,6 +189,8 @@ bool CologneChip::detect_flash()
+ 				new SPIFlash(reinterpret_cast<SPIInterface *>(_spi), false, _verbose):
+ 				new SPIFlash(this, false, _verbose));
+ 		flash->read_id();
++		if (full_info)
++			flash->display_info();
+ 		flash->display_status_reg();
+ 	} catch (std::exception &e) {
+ 		printError("Fail");
+diff --git a/src/colognechip.hpp b/src/colognechip.hpp
+index 70e6ac0..83acb28 100644
+--- a/src/colognechip.hpp
++++ b/src/colognechip.hpp
+@@ -37,7 +37,7 @@ class CologneChip: public Device, SPIInterface {
+ 
+ 		bool cfgDone();
+ 		void waitCfgDone();
+-		bool detect_flash() override;
++		bool detect_flash(bool full_info) override;
+ 		bool dumpFlash(uint32_t base_addr, uint32_t len) override;
+ 		virtual bool protect_flash(uint32_t len) override {
+ 			(void) len;
+diff --git a/src/device.hpp b/src/device.hpp
+index 70db627..b115618 100644
+--- a/src/device.hpp
++++ b/src/device.hpp
+@@ -46,7 +46,13 @@ class Device {
+ 		/**********************/
+ 		/*    flash access    */
+ 		/**********************/
+-		virtual bool detect_flash() {
++		/*!
++		 * \brief detect and display SPI flash
++		 * \param[in] full_info: also display manufacturer, size,
++		 *            unique ID and SFDP details (read modes, ...)
++		 */
++		virtual bool detect_flash(bool full_info) {
++			(void) full_info;
+ 			printError("detect flash not supported"); return false;}
+ 		virtual bool dumpFlash(uint32_t base_addr, uint32_t len) {
+ 			(void) base_addr; (void) len;
+diff --git a/src/efinix.cpp b/src/efinix.cpp
+index 669133b..3f188b0 100644
+--- a/src/efinix.cpp
++++ b/src/efinix.cpp
+@@ -254,10 +254,10 @@ void Efinix::program(unsigned int offset, bool unprotect_flash)
+ 	delete bit;
+ }
+ 
+-bool Efinix::detect_flash()
++bool Efinix::detect_flash(bool full_info)
+ {
+ 	if (_jtag) {
+-		return SPIInterface::detect_flash();
++		return SPIInterface::detect_flash(full_info);
+ 	}
+ 
+ #if 0
+@@ -265,7 +265,7 @@ bool Efinix::detect_flash()
+ 	 * uncomment it and submit a PR!  */
+ 	_spi->gpio_clear(_rst_pin);
+ 
+-	bool rv = reinterpret_cast<SPIInterface *>(_spi)->detect_flash();
++	bool rv = reinterpret_cast<SPIInterface *>(_spi)->detect_flash(full_info);
+ 
+ 	reset();
+ 
+diff --git a/src/efinix.hpp b/src/efinix.hpp
+index 2e0ac6a..c6c9e9b 100644
+--- a/src/efinix.hpp
++++ b/src/efinix.hpp
+@@ -28,7 +28,7 @@ class Efinix: public Device, SPIInterface {
+ 		~Efinix();
+ 
+ 		void program(unsigned int offset, bool unprotect_flash) override;
+-		bool detect_flash() override;
++		bool detect_flash(bool full_info) override;
+ 		bool dumpFlash(uint32_t base_addr, uint32_t len) override;
+ 		bool protect_flash(uint32_t len) override {
+ 			(void) len;
+diff --git a/src/gowin.hpp b/src/gowin.hpp
+index 55aaa8c..523f311 100644
+--- a/src/gowin.hpp
++++ b/src/gowin.hpp
+@@ -30,9 +30,9 @@ class Gowin: public Device, SPIInterface {
+ 		bool connectJtagToMCU() override;
+ 
+ 		/* spi interface */
+-		bool detect_flash() override {
++		bool detect_flash(bool full_info) override {
+ 			if (is_gw5a || is_gw2a)
+-				return SPIInterface::detect_flash();
++				return SPIInterface::detect_flash(full_info);
+ 			printError("detect flash not supported"); return false;}
+ 		bool protect_flash(uint32_t len) override {
+ 			(void) len;
+diff --git a/src/ice40.cpp b/src/ice40.cpp
+index ea0bffd..d6d9b98 100644
+--- a/src/ice40.cpp
++++ b/src/ice40.cpp
+@@ -148,7 +148,7 @@ void Ice40::program(unsigned int offset, bool unprotect_flash)
+ 	post_flash_access();
+ }
+ 
+-bool Ice40::detect_flash()
++bool Ice40::detect_flash(bool full_info)
+ {
+ 	/* prepare SPI access */
+ 	prepare_flash_access();
+@@ -156,6 +156,8 @@ bool Ice40::detect_flash()
+ 	try {
+ 		SPIFlash flash(reinterpret_cast<SPIInterface *>(_spi), false, _verbose_level);
+ 		flash.read_id();
++		if (full_info)
++			flash.display_info();
+ 		flash.display_status_reg();
+ 	} catch (std::exception &e) {
+ 		printError("Fail");
+diff --git a/src/ice40.hpp b/src/ice40.hpp
+index e4ab48f..6aec770 100644
+--- a/src/ice40.hpp
++++ b/src/ice40.hpp
+@@ -24,7 +24,7 @@ class Ice40: public Device, SPIInterface {
+ 		void program(unsigned int offset, bool unprotect_flash) override;
+ 		bool program_cram(const uint8_t *data, uint32_t length);
+ 		bool dumpFlash(uint32_t base_addr, uint32_t len) override;
+-		bool detect_flash() override;
++		bool detect_flash(bool full_info) override;
+ 		bool protect_flash(uint32_t len) override;
+ 		bool unprotect_flash() override;
+ 		bool bulk_erase_flash() override;
+diff --git a/src/lattice.hpp b/src/lattice.hpp
+index d79da43..ffe34cf 100644
+--- a/src/lattice.hpp
++++ b/src/lattice.hpp
+@@ -40,8 +40,8 @@ class Lattice: public Device, SPIInterface {
+ 		/*!
+ 		 * \brief display SPI flash ID and status register
+ 		 */
+-		bool detect_flash() override {
+-			return SPIInterface::detect_flash();
++		bool detect_flash(bool full_info) override {
++			return SPIInterface::detect_flash(full_info);
+ 		}
+ 		/*!
+ 		 * \brief protect SPI flash blocks
+diff --git a/src/main.cpp b/src/main.cpp
+index d073ba3..c81a8a8 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -125,8 +125,9 @@ struct arguments {
+ 	std::map<uint32_t, misc_device> user_misc_devs;
+ 	bool read_dna;
+ 	bool read_xadc;
+-	string read_register;
+-	string user_flash;
++	std::string read_register;
++	std::string user_flash;
++	bool flash_info;
+ };
+ 
+ int run_xvc_server(const struct arguments &args, const cable_t &cable,
+@@ -165,7 +166,8 @@ int main(int argc, char **argv)
+ 			false, 3721, "-",
+ 			"", false, {},  // mcufw conmcu, user_misc_dev_list
+ 			false, false, "", // read_dna, read_xadc, read_register
+-			"" // user_flash
++			"", // user_flash
++			false // flash_info
+ 	};
+ 	/* parse arguments */
+ 	int ret = parse_opt(argc, argv, &args, &pins_config);
+@@ -634,7 +636,7 @@ int main(int argc, char **argv)
+ 
+ 	/* detect/display flash */
+ 	if (args.detect_flash != 0) {
+-		fpga->detect_flash();
++		fpga->detect_flash(args.flash_info);
+ 	}
+ 
+ 	if (args.prg_type == Device::RD_FLASH) {
+@@ -766,7 +768,7 @@ int spi_comm(struct arguments args, const cable_t &cable,
+ 					args.prg_type == Device::WR_SRAM) ||
+ 					!args.bit_file.empty() || !args.file_type.empty()) {
+ 			if (args.detect_flash)
+-				target->detect_flash();
++				target->detect_flash(args.flash_info);
+ 			else
+ 				target->program(args.offset, args.unprotect_flash);
+ 		}
+@@ -787,6 +789,8 @@ int spi_comm(struct arguments args, const cable_t &cable,
+ 		}
+ 
+ 		SPIFlash flash((SPIInterface *)spi, args.unprotect_flash, args.verbose);
++		if (args.flash_info)
++			flash.display_info();
+ 		flash.display_status_reg();
+ 
+ 		if (args.prg_type != Device::RD_FLASH &&
+@@ -933,6 +937,9 @@ int parse_opt(int argc, char **argv, struct arguments *args,
+ 				cxxopts::value<bool>(args->detect))
+ 			("dfu",   "DFU mode", cxxopts::value<bool>(args->dfu))
+ 			("dump-flash",  "Dump flash mode")
++			("flash-info",  "display detailed SPI flash information "
++				"(manufacturer, part, size, unique ID, SFDP read modes)",
++				cxxopts::value<bool>(args->flash_info))
+ 			("bulk-erase",   "Bulk erase flash",
+ 				cxxopts::value<bool>(args->bulk_erase_flash))
+ 			("enable-quad",   "Enable quad mode for SPI Flash",
+@@ -1189,7 +1196,8 @@ int parse_opt(int argc, char **argv, struct arguments *args,
+ 				 !args->protect_flash &&
+ 				 !args->unprotect_flash &&
+ 				 !args->bulk_erase_flash &&
+-				 !args->detect
++				 !args->detect &&
++				 !args->flash_info
+ 				) {
+ 				printError("Error: secondary bitfile not specified");
+ 				cout << options.help() << endl;
+@@ -1213,6 +1221,7 @@ int parse_opt(int argc, char **argv, struct arguments *args,
+ 			args->mcufw.empty() &&
+ 			!args->is_list_command &&
+ 			!args->detect &&
++			!args->flash_info &&
+ 			!args->protect_flash &&
+ 			!args->unprotect_flash &&
+ 			!args->enable_quad &&
+@@ -1229,6 +1238,12 @@ int parse_opt(int argc, char **argv, struct arguments *args,
+ 			return -1;
+ 		}
+ 
++		// --flash-info: same as --detect -f with more details
++		if (args->flash_info) {
++			args->detect = true;
++			args->prg_type = Device::WR_FLASH;
++		}
++
+ 		// user ask detect with flash set
+ 		// detect/display flash CHIP informations instead
+ 		// of FPGA details
+diff --git a/src/spiInterface.cpp b/src/spiInterface.cpp
+index 7e33ba6..8a4cffd 100644
+--- a/src/spiInterface.cpp
++++ b/src/spiInterface.cpp
+@@ -23,7 +23,7 @@ SPIInterface::SPIInterface(const std::string &filename, int8_t verbose,
+ {}
+ 
+ /* spiFlash generic acces */
+-bool SPIInterface::detect_flash()
++bool SPIInterface::detect_flash(bool full_info)
+ {
+ 	bool ret = true;
+ 
+@@ -39,6 +39,8 @@ bool SPIInterface::detect_flash()
+ 	try {
+ 		// instanciate call (display flash ID is automatic)
+ 		SPIFlash flash(this, false, _spif_verbose);
++		if (full_info)
++			flash.display_info();
+ 		// display status register
+ 		flash.display_status_reg();
+ 
+diff --git a/src/spiInterface.hpp b/src/spiInterface.hpp
+index c25416c..b0009ea 100644
+--- a/src/spiInterface.hpp
++++ b/src/spiInterface.hpp
+@@ -28,7 +28,7 @@ class SPIInterface {
+ 			bool skip_reset = false);
+ 	virtual ~SPIInterface() {}
+ 
+-	bool detect_flash();
++	bool detect_flash(bool full_info = false);
+ 	bool protect_flash(uint32_t len);
+ 	bool unprotect_flash();
+ 	bool set_quad_bit(bool set_quad);
+diff --git a/src/xilinx.cpp b/src/xilinx.cpp
+index 549fe00..fde2513 100644
+--- a/src/xilinx.cpp
++++ b/src/xilinx.cpp
+@@ -1275,16 +1275,16 @@ bool Xilinx::dumpFlash(uint32_t base_addr, uint32_t len)
+ 	return true;
+ }
+ 
+-bool Xilinx::detect_flash()
++bool Xilinx::detect_flash(bool full_info)
+ {
+ 	if (_flash_chips & PRIMARY_FLASH) {
+ 		select_flash_chip(PRIMARY_FLASH);
+-		if (!SPIInterface::detect_flash())
++		if (!SPIInterface::detect_flash(full_info))
+ 			return false;
+ 	}
+ 	if (_flash_chips & SECONDARY_FLASH) {
+ 		select_flash_chip(SECONDARY_FLASH);
+-		if (!SPIInterface::detect_flash())
++		if (!SPIInterface::detect_flash(full_info))
+ 			return false;
+ 	}
+ 	return true;
+diff --git a/src/xilinx.hpp b/src/xilinx.hpp
+index bac4978..8dc6c94 100644
+--- a/src/xilinx.hpp
++++ b/src/xilinx.hpp
+@@ -60,7 +60,7 @@ class Xilinx: public Device, SPIInterface {
+ 		/*!
+ 		 * \brief display SPI flash ID and status register
+ 		 */
+-		bool detect_flash() override;
++		bool detect_flash(bool full_info) override;
+ 		/*!
+ 		 * \brief protect SPI flash blocks
+ 		 */

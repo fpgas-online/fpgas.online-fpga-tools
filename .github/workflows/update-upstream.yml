@@ -1,0 +1,66 @@
+name: Update upstream pins
+
+# Weekly: move the master pins to the upstream heads (and the stable pins to
+# the newest release tag), re-apply every patch series against the new pins
+# and open a pull request carrying the result. A series that no longer
+# applies still gets a pull request, marked ❌, so the drift is visible and
+# someone rebases it (`fpgatools apply <tool> <track>` reproduces it).
+#
+# Known limitation: a pull request opened with GITHUB_TOKEN does not trigger
+# the pull_request workflows. The apply report in the PR body is the first
+# signal; CI runs once a human pushes to the branch or reopens the PR.
+# The organisation must also allow Actions to create pull requests
+# (Settings -> Actions -> General -> Workflow permissions).
+on:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --quiet
+
+      - name: Move the pins and re-apply the series
+        run: uv run fpgatools bump --report tmp/bump.md
+
+      - name: Nothing moved?
+        id: diff
+        run: |
+          if git diff --quiet upstreams.toml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git --no-pager diff upstreams.toml
+          fi
+
+      - name: Open the pull request
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          branch="bump/$(date -u +%Y%m%d-%H%M)"
+          git config user.name "fpgas.online build"
+          git config user.email "builds@fpgas.online"
+          git checkout -b "$branch"
+          git add upstreams.toml
+          git commit -F - <<'EOF'
+          upstreams: weekly pin bump
+
+          Moved by `fpgatools bump` (update-upstream.yml). See the pull request
+          body for the per-series apply report.
+          EOF
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "upstreams: weekly pin bump $(date -u +%Y-%m-%d)" \
+            --body-file tmp/bump.md

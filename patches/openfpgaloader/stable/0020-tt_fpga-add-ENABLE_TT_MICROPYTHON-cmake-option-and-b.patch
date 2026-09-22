@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Mon, 16 Mar 2026 17:47:58 +1030
+Subject: [PATCH 20/24] tt_fpga: add ENABLE_TT_MICROPYTHON cmake option and
+ build integration
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add ENABLE_TT_MICROPYTHON option (defaults to ON with ENABLE_CABLE_ALL),
+conditional source/header inclusion, -DENABLE_TT_MICROPYTHON=1 define,
+and add to USE_DEVICE_ARG condition for -d flag availability.
+
+No new library dependencies — only uses POSIX termios (Linux-only).
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+---
+ CMakeLists.txt | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c0152a2..539c3b2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -51,6 +51,7 @@ option(ENABLE_DFU              "enable DFU support (requires libUSB)"         ${
+ option(ENABLE_FTDI_BASED_CABLE "enable cables based on FTDI (requires libFTDI" ${ENABLE_CABLE_ALL})
+ option(ENABLE_GOWIN_GWU2X      "enable Gowin GWU2X interface"                 ${ENABLE_CABLE_ALL})
+ option(ENABLE_SVF_JTAG         "enable SVF support"                           ${ENABLE_CABLE_ALL})
++option(ENABLE_TT_MICROPYTHON   "enable TinyTapeout MicroPython support"       ${ENABLE_CABLE_ALL})
+ option(ENABLE_USB_BLASTERI     "enable Altera USB Blaster I support"          ${ENABLE_CABLE_ALL})
+ option(ENABLE_USB_BLASTERII    "enable Altera USB Blaster II support"         ${ENABLE_CABLE_ALL})
+ 
+@@ -608,6 +609,12 @@ list (APPEND OPENFPGALOADER_HEADERS src/svf_jtag.hpp)
+ add_definitions(-DENABLE_SVF_JTAG)
+ endif()
+ 
++# TinyTapeout MicroPython
++if (ENABLE_TT_MICROPYTHON)
++list(APPEND OPENFPGALOADER_SOURCE  src/ttMicropython.cpp)
++list(APPEND OPENFPGALOADER_HEADERS src/ttMicropython.hpp)
++endif()
++
+ # Xilinx Virtual Cable
+ if (ENABLE_XILINX_VIRTUAL_CABLE_CLIENT)
+ list (APPEND OPENFPGALOADER_SOURCE  src/xvc_client.cpp)
+@@ -691,9 +698,9 @@ if (ENABLE_UDEV)
+ 	target_link_libraries(openFPGALoader ${LIBUDEV_LIBRARIES})
+ endif()
+ 
+-if (ENABLE_UDEV OR ENABLE_LIBGPIOD OR ENABLE_JETSONNANOGPIO)
++if (ENABLE_UDEV OR ENABLE_LIBGPIOD OR ENABLE_JETSONNANOGPIO OR ENABLE_TT_MICROPYTHON)
+ 	add_definitions(-DUSE_DEVICE_ARG)
+-endif(ENABLE_UDEV OR ENABLE_LIBGPIOD OR ENABLE_JETSONNANOGPIO)
++endif(ENABLE_UDEV OR ENABLE_LIBGPIOD OR ENABLE_JETSONNANOGPIO OR ENABLE_TT_MICROPYTHON)
+ 
+ if (BUILD_STATIC)
+ 	set_target_properties(openFPGALoader PROPERTIES LINK_SEARCH_END_STATIC 1)
+@@ -736,6 +743,14 @@ else()
+ 	message("DFU support disabled")
+ endif()
+ 
++# TinyTapeout MicroPython
++if (ENABLE_TT_MICROPYTHON)
++	add_definitions(-DENABLE_TT_MICROPYTHON=1)
++	message("TinyTapeout MicroPython support enabled")
++else()
++	message("TinyTapeout MicroPython support disabled")
++endif()
++
+ # dirtyJtag
+ if (ENABLE_DIRTYJTAG)
+ 	add_definitions(-DENABLE_DIRTYJTAG=1)
