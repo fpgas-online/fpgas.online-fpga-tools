@@ -371,3 +371,26 @@ are unit-tested; git-touching code is exercised by CI's apply step.
 5. Consider upstreaming order: flash-info and the NeTV2 boards are closest to
    mergeable upstream; the rp1pio drivers need librp1jtag packaged somewhere
    upstream can depend on.
+6. A GPG-signed `SHA256SUMS` on the release, signed with the apt key, once
+   `APT_GPG_PRIVATE_KEY` exists (asked for by rpi-hwid, section 12).
+
+## 12. Published contract (consumers)
+
+`mithro/rpi-hwid` downloads the static openFPGALoader from this repository's
+releases and fails closed on any shape change. These are therefore a
+contract, changed only with notice to that repo:
+
+- asset name `openFPGALoader-<version>-linux-<arch>` with `<arch>` in
+  `arm64`, `armv7`, `armv6`; a `<asset>.sha256` beside it in `sha256sum`
+  format (`<hex>  <filename>`);
+- `latest.json` on the series release:
+  `{"series": "vX.Y", "latest": {track: {tool: {arch: {"asset", "version"}}}}}`;
+- every fpgas.online build's version contains `+fpgasonline.` and prints as
+  `openFPGALoader v<version>`; that substring is the gate for "has
+  `--flash-info`".
+
+Behavioural note recorded for the same consumer: `--flash-info` (like any
+`--detect -f`) on a JTAG-attached Xilinx loads the spiOverJtag bridge, so
+it replaces the running design, and afterwards `Xilinx::post_flash_access()`
+issues JPROGRAM so the FPGA reboots from its flash (or is left unconfigured
+if it only had an SRAM design). There is no bridge-free path to the JEDEC id.
