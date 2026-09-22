@@ -62,4 +62,12 @@ if [ -z "$pc" ]; then
 	echo "build-rp1jtag: rp1jtag.pc was not installed under $prefix" >&2
 	exit 1
 fi
-echo "build-rp1jtag: installed $archive and $pc"
+# Only the static archive is installed, and it calls PIOLib, so consumers
+# that link -lrp1jtag through pkg-config must get -lpio as well. Upstream's
+# .pc lists only -lrp1jtag (right for its shared library); amend the copy
+# under this prefix rather than carrying a patch against rp1-jtag.
+if ! grep -q -- '-lpio' "$pc"; then
+	sed -i 's/^Libs: \(.*\)$/Libs: \1 -lpio -lpthread/' "$pc"
+fi
+grep -q -- '-lrp1jtag -lpio' "$pc" || { echo "build-rp1jtag: failed to amend $pc" >&2; exit 1; }
+echo "build-rp1jtag: installed $archive and $pc ($(grep '^Libs:' "$pc"))"

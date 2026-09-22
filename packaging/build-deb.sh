@@ -36,7 +36,8 @@ echo "==> $tool/$track $version"
 
 fpgatools fetch piolib
 fpgatools fetch rp1jtag
-src=$(fpgatools apply "$tool" "$track" | tail -n 1)
+fpgatools apply "$tool" "$track"
+src=$REPO/build/src/$tool-$track
 echo "==> patched tree at $src"
 
 packaging/build-rp1jtag.sh build/src/piolib build/src/rp1jtag "$RP1JTAG_PREFIX"
