@@ -14,13 +14,17 @@ OUT=${OUT:-$REPO/built-static}
 PREFIX=${PREFIX:-/usr}
 
 static_arch() {
-	# The name used in release asset filenames, from the kernel's view.
-	case $(uname -m) in
+	# The name used in release asset filenames: the architecture of the
+	# Alpine userland being built for. Not `uname -m`: in arm32v7/arm32v6
+	# containers on an arm64 host it reports aarch64 (seen on the CI runners
+	# and on a Cortex-A72 box). Alpine calls its ARMv6 hard-float port armhf.
+	arch=$(apk --print-arch)
+	case $arch in
 	aarch64) echo arm64 ;;
-	armv7l) echo armv7 ;;
-	armv6l) echo armv6 ;;
+	armv7) echo armv7 ;;
+	armhf) echo armv6 ;;
 	x86_64) echo amd64 ;;
-	*) uname -m ;;
+	*) echo "ERROR: no asset name for Alpine arch $arch" >&2; exit 1 ;;
 	esac
 }
 
@@ -80,6 +84,14 @@ static_assert_static() {
 	file "$1" | tee /tmp/file.txt
 	grep -qE "statically linked|static-pie linked" /tmp/file.txt \
 		|| { echo "ERROR: $1 is not statically linked" >&2; exit 1; }
+	# The asset is named by static_arch; the binary must be that architecture.
+	case $(static_arch) in
+	arm64) elf="ELF 64-bit LSB.*ARM aarch64" ;;
+	armv7 | armv6) elf="ELF 32-bit LSB.*ARM" ;;
+	amd64) elf="ELF 64-bit LSB.*x86-64" ;;
+	esac
+	grep -qE "$elf" /tmp/file.txt \
+		|| { echo "ERROR: $1 is not a $(static_arch) binary" >&2; exit 1; }
 }
 
 static_sha256() {

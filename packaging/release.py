@@ -71,6 +71,28 @@ def latest_index(names: list[str]) -> dict:
     return index
 
 
+def collect_assets(assets_dir: Path) -> list[Path]:
+    """Build assets and their .sha256 files anywhere under assets_dir, by name.
+
+    Each build job's artifact is downloaded into its own subdirectory, so two
+    builds that claim one asset name (as the 32-bit builds once did, naming
+    themselves arm64) are both still on disk; refuse to upload either.
+    """
+    found: dict[str, list[Path]] = {}
+    for p in assets_dir.rglob("*"):
+        if not p.is_file():
+            continue
+        base = p.name.removesuffix(".sha256")
+        if classify(base):
+            found.setdefault(p.name, []).append(p)
+    clashes = {n: ps for n, ps in found.items() if len(ps) > 1}
+    if clashes:
+        lines = [f"  {n}: {', '.join(p.parent.name for p in ps)}"
+                 for n, ps in sorted(clashes.items())]
+        sys.exit("asset names produced by more than one build:\n" + "\n".join(lines))
+    return [found[n][0] for n in sorted(found)]
+
+
 def sh(*args: str, check: bool = True) -> str:
     r = subprocess.run(args, capture_output=True, text=True)
     if check and r.returncode != 0:
@@ -112,8 +134,7 @@ def main() -> int:
     args = ap.parse_args()
 
     assets_dir = Path(args.assets)
-    local = sorted(p for p in assets_dir.iterdir() if p.is_file() and classify(p.name) or
-                   p.name.endswith(".sha256"))
+    local = collect_assets(assets_dir)
     if not local:
         sys.exit(f"no build assets under {assets_dir}")
     tag = args.series or series_tag()
