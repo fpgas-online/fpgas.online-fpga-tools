@@ -1,0 +1,81 @@
+name: Debian packages + apt repository
+
+# Every push to main builds openfpgaloader-fpgasonline[-git] and
+# openocd-fpgasonline[-git] for each supported suite and architecture, then
+# publishes one signed flat apt repository per suite to this repository's
+# GitHub Pages through mithro/apt-repo-action:
+#
+#   deb [signed-by=/etc/apt/keyrings/fpgas-online-fpga-tools.gpg] \
+#       https://fpgas-online.github.io/fpgas.online-fpga-tools/<suite>/ ./
+#
+# Pull requests build everything and publish nothing.
+#
+# arm64 and armhf only: the point of these builds is the Raspberry Pi fleet
+# (the RP1 PIO driver has nothing to drive elsewhere). bookworm is built as
+# well as trixie/sid because the fpgas.online Pi NFS root is still bookworm.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A reusable workflow cannot escalate beyond its caller's permissions, so the
+# Pages scopes are granted on the publish job alone; the build jobs run Docker
+# and compile third-party sources and must never hold a token that can write.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.tool }}/${{ matrix.track }} (${{ matrix.suite }} ${{ matrix.arch }})
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [openfpgaloader, openocd]
+        track: [stable, master]
+        suite: [bookworm, trixie, sid]
+        arch: [arm64, armhf]
+        include:
+          - arch: arm64
+            platform: linux/arm64
+          - arch: armhf
+            platform: linux/arm/v7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # fpgatools version needs the series tags
+
+      - name: Build in debian:${{ matrix.suite }} for ${{ matrix.arch }}
+        run: |
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work \
+            "debian:${{ matrix.suite }}" \
+            sh -ec 'packaging/build-deb.sh ${{ matrix.tool }} ${{ matrix.track }}'
+
+      # The publish workflow derives the suite from the text between "debs-"
+      # and the next dash, so anything after "debs-<suite>-<arch>" only keeps
+      # the artifact names distinct.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debs-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
+          path: built-debs/*.deb
+          if-no-files-found: error
+
+  publish:
+    # Scoped to this job alone: a job calling a reusable workflow sets the
+    # maximum permissions available to it.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@main
+    with:
+      suites: "bookworm trixie sid"
+      architectures: "arm64 armhf"
+      keyring-name: fpgas-online-fpga-tools.gpg
+      description: "fpgas.online builds of openFPGALoader and OpenOCD (RP1 PIO JTAG, NeTV2, Tiny Tapeout FPGA board, SPI flash info)"
+    secrets:
+      gpg-private-key: ${{ secrets.APT_GPG_PRIVATE_KEY }}
