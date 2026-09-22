@@ -49,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          branch="bump/$(date -u +%Y%m%d)"
+          branch="bump/$(date -u +%Y%m%d-%H%M)"
           git config user.name "fpgas.online build"
           git config user.email "builds@fpgas.online"
           git checkout -b "$branch"

@@ -32,7 +32,7 @@ want to override).
 
 | Where | What | State |
 |---|---|---|
-| `mithro/rp1-jtag` `drivers/openfpgaloader/` | `rp1PioJtag.{cpp,hpp}` cable driver + `integrate.py` that text-patches `cable.hpp`, `jtag.cpp`, `CMakeLists.txt` | Newer than the fork copy (adds TDI word buffering, NeTV2 default pins) |
+| `mithro/rp1-jtag` `drivers/openfpgaloader/` | `rp1PioJtag.{cpp,hpp}` cable driver + `integrate.py` that text-patches `cable.hpp`, `jtag.cpp`, `CMakeLists.txt` | The copy rp1-jtag builds into the `openfpgaloader-rp1pio` debs the fleet runs (152 lines, NeTV2 default pins, no TDI buffering). The fork branch `feature/rp1-jtag-netv2` carries a different variant (313 lines, TDI word buffering); which is better was not settled here, the fleet-tested one is used |
 | `mithro/rp1-jtag` `drivers/openocd/` | `rp1_pio_jtag.c` adapter driver (GPL-2.0-or-later) + `integrate.py` for `configure.ac`, `Makefile.am`, `interface.h`, `interfaces.c`; `netv2_35t.cfg`, `netv2_35t_spi.cfg` | Working; shipped as `openocd-rp1pio` |
 | `mithro/rp1-jtag` `.github/workflows/deb.yml` | Builds `openfpgaloader-rp1pio` and `openocd-rp1pio` debs from upstream **HEAD** (`git clone --depth 1`), hand-rolled `dpkg-deb`, publishes per-suite apt to `mith.ro/rp1-jtag` | Green; no stable track, no pin, version `0.0.postN` says nothing about upstream |
 | `mithro/rp1-jtag` `static-openfpgaloader.yml` | Alpine static openFPGALoader arm64/armv7/armv6 | Artifacts only, never released |
@@ -40,7 +40,7 @@ want to override).
 | `mithro/openFPGALoader` `tt-fpga-support` | 7 commits: `tt_fpga` board / `tt_micropython` cable, iCE40UP5K via RP2040/RP2350 MicroPython raw REPL, macOS/Windows | 164 commits behind upstream; upstream since removed `USE_DEVICE_ARG` |
 | `mithro/openFPGALoader` `feature/rp1-jtag-netv2` | rp1pio driver (older copy) + `netv2`/`netv2_100` boards + GPIO cable autodetect (rp1pio if `/dev/pio0`, else libgpiod) | 168 behind |
 | `mithro/openFPGALoader` `feature/netv2` | The libgpiod-only variant of the NeTV2 boards | Upstream PR trabucayre/openFPGALoader#643, open since 2026-04 |
-| `mithro/rpi-hwid` `src/rpi_hwid/fpga.py` | Xilinx 7-series Device DNA over OpenOCD (`irscan 0x32`, 64-bit `drscan`, bit-reverse, keep 57 bits); ECP5 TraceID (`UIDCODE_PUB` 0x19 into 8-bit IR, 64-bit DR, keep low 56 bits) | Inline `-c` command lists, not config files |
+| `mithro/rpi-hwid` `src/rpi_hwid/fpga.py` (local checkout) | Xilinx 7-series Device DNA over OpenOCD (`irscan 0x32`, 64-bit `drscan`, bit-reverse, keep 57 bits); ECP5 TraceID through Apollo (`UIDCODE_PUB` 0x19 into 8-bit IR, 64-bit DR, keep low 56 bits) | Inline command lists, not config files. The TraceID sequence is cross-checked against ecpdap `read_uid()` and Lattice TN1260, which the patch cites |
 | `fpgas-online/fpgas.online-test-designs` `designs/pcie-enumeration/openocd/alphamax-rpi.cfg` | NeTV2 via `linuxgpiod` (Pi 5) or `bcm2835gpio` (Pi 1-4) | Pins 4/17/27/22, SRST 24 |
 | `fpgas-online/fpgas.online-infra` PR #48 (merged 2026-09-14) | NFS root installs `openfpgaloader-rp1pio` + `openocd-rp1pio` from `mithro.github.io/rp1-jtag/<suite>/` | Live on the fleet |
 | `fpgas-online/apt` | Single shared `pool/` indexed into `bookworm` and `trixie` | Suitable for `Architecture: all` only; a compiled deb built against bookworm libs would be offered to trixie too |
@@ -126,7 +126,7 @@ visible; CI runs it and fails on a mismatch unless the patch name carries a
 |---|---|---|---|
 | 1-14 | The `flash-info` series (14 commits, subjects kept verbatim) | `mithro/openFPGALoader@flash-info` | Apache-2.0 |
 | 15 | `Add netv2 and netv2_100 board definitions with auto-detected cable` | `feature/rp1-jtag-netv2` `55badb9`: rp1pio if `/dev/pio0`, else libgpiod | Apache-2.0 |
-| 16 | `Add rp1pio cable driver for RP1 PIO JTAG on RPi 5` | `rp1-jtag/drivers/openfpgaloader/` (newer buffered driver) + the CMake/cable/jtag glue `integrate.py` applies, via `pkg_check_modules(rp1jtag)` | Apache-2.0 |
+| 16 | `Add rp1pio cable driver for RP1 PIO JTAG on RPi 5` | `rp1-jtag/drivers/openfpgaloader/` (the fleet-deployed copy, byte-identical) + the CMake/cable/jtag glue `integrate.py` applies, via `pkg_check_modules(rp1jtag)` | Apache-2.0 |
 | 17-23 | Tiny Tapeout FPGA Demo Board series: core (`ttMicropython.{cpp,hpp}`), board + cable defs, `COMM_TT_MICROPYTHON` dispatch, `ENABLE_TT_MICROPYTHON` cmake option, RP2350 hi-Z after programming, code-review fixes, macOS/Windows serial | `tt-fpga-support`, all seven commits kept (the fix-up commit touches two earlier commits, so folding it would have meant rewriting history the fork never had) | Apache-2.0 |
 | 24 | `cmake: allow the reported version string to be overridden` | new, 4 lines: `OPENFPGALOADER_VERSION` cache var, default `v${PROJECT_VERSION}` | Apache-2.0 |
 
@@ -292,12 +292,14 @@ overwritten except `latest.json`.
 
 ### CI (`ci.yml`, push + PR)
 
-`uv run ruff check`, `uv run pytest`, `fpgatools apply` for all four series
-(fails on conflict), `fpgatools compare` for both tools, and a native amd64
-compile of each tool/track in `debian:trixie` with `ENABLE_RP1_PIO=OFF` /
-without `--enable-rp1-pio-jtag` (librp1jtag has nothing to drive on amd64;
-the point is a fast compile check of the C++/C changes). PRs also run
+`uv run ruff check`, `uv run pytest`, shellcheck, `fpgatools apply` for all
+four series (fails on conflict), `fpgatools compare` for both tools, and a
+native amd64 **deb build** of each tool/track in `debian:trixie` through the
+same `packaging/build-deb.sh` the arm matrix uses (RP1 PIO on: librp1jtag
+compiles anywhere, it just has nothing to drive on amd64). PRs also run
 `debs.yml` and `static.yml` build jobs (publish jobs are main-only).
+`packaging/compile-check.sh` is the developer-side equivalent (configure,
+build, assert cables/adapters/version) without packaging.
 
 ### Upstream tracking (`update-upstream.yml`, weekly + dispatch)
 
@@ -339,11 +341,13 @@ are unit-tested; git-touching code is exercised by CI's apply step.
   parse check (`openocd -f board/netv2-rpi-bcm2835gpio.cfg -c exit` needs
   hardware, so only `openocd -c 'script board/...' -c exit` syntax checks
   that do not `init`).
-- Hardware, read-only, on `rpi5-netv2` (10.1.10.14, NeTV2 XC7A100T, the dev
-  box named in rp1-jtag `hw.md`): the arm64 static `openFPGALoader -c rp1pio
-  --pins 27:22:4:17 --detect` and `--read-dna`; the static `openocd -f
-  board/netv2-rpi.cfg -c init -c 'xc7_read_dna xc7.tap' -c shutdown` must
-  print the same DNA. ECP5 TraceID cannot be hardware-verified here (the
+- Hardware, read-only, on `rpi5-netv2` (`rpi5-netv2.iot.welland.mithis.com`,
+  NeTV2 XC7A100T, the dev box named in rp1-jtag `hw.md`): the arm64 static
+  `openFPGALoader -c rp1pio --pins 27:22:4:17 --detect` and `--read-dna`; the
+  static `openocd -f board/netv2-rpi.cfg -f fpga/xilinx-dna.cfg -c init -c
+  'xilinx_print_dna [xc7_get_dna xc7.tap]' -c shutdown` must print the same
+  DNA. **Not done in the first PR**: the arm64 static artifacts come from CI,
+  which cannot run until the repository is public (see section 11). ECP5 TraceID cannot be hardware-verified here (the
   only ECP5 sits behind Apollo, not a GPIO harness) and is marked as such in
   the file header.
 - Independent reviewer agent over the patches and workflows before the PR is

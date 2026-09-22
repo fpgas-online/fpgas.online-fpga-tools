@@ -71,7 +71,9 @@ jobs:
       id-token: write
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
-    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@main
+    # Pinned by commit: this job hands the signing key to the called workflow.
+    # main was e7763b9 on 2026-09-22; bump deliberately.
+    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@e7763b9f6a7795cd6b97b3972921905a33b41c6f
     with:
       suites: "bookworm trixie sid"
       architectures: "arm64 armhf"

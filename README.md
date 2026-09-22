@@ -18,12 +18,18 @@ The exact pins are in [`upstreams.toml`](upstreams.toml).
 
 | Feature | openFPGALoader | OpenOCD | Upstream status |
 |---|---|---|---|
-| **RP1 PIO JTAG** on a Raspberry Pi 5: the RP1's PIO block shifts data instead of bit-banging PCIe-attached GPIOs (~6x faster bitstream loads) | `rp1pio` cable | `rp1_pio_jtag` adapter, `interface/raspberrypi-rp1-pio.cfg` | not upstream; driver from [mithro/rp1-jtag](https://github.com/mithro/rp1-jtag); needs librp1jtag, linked in statically |
+| **RP1 PIO JTAG** on a Raspberry Pi 5: the RP1's PIO block shifts data instead of bit-banging PCIe-attached GPIOs (rp1-jtag's benchmarks: 6.5 s instead of 39 s for a 3.8 MB Artix-7 bitstream) | `rp1pio` cable | `rp1_pio_jtag` adapter, `interface/raspberrypi-rp1-pio.cfg` | not upstream; drivers are the copies [mithro/rp1-jtag](https://github.com/mithro/rp1-jtag) ships in its own debs; needs librp1jtag, linked in statically |
 | **Kosagi NeTV2** on a Pi header, old-style (Pi 1-4 `bcm2835gpio`) and new-style (Pi 5 RP1 PIO), plus `linuxgpiod`, a picker and a jtagspi flash variant | `netv2`, `netv2_100` boards with GPIO cable auto-detection | `board/netv2-rpi*.cfg` | openFPGALoader boards: [PR #643](https://github.com/trabucayre/openFPGALoader/pull/643) open |
 | **Tiny Tapeout FPGA Demo Board** (iCE40UP5K behind an RP2040/RP2350 running MicroPython) | `tt_fpga` board, `tt_micropython` cable | | not upstream ([mithro/openFPGALoader tt-fpga-support](https://github.com/mithro/openFPGALoader/tree/tt-fpga-support)) |
 | **SPI flash info and unique ID**: JEDEC id, SFDP parameters, factory unique id, machine-readable output | `--flash-info`, `--flash-info-json` | | not upstream ([mithro/openFPGALoader flash-info](https://github.com/mithro/openFPGALoader/tree/flash-info)) |
 | **Device DNA / TraceID**: die-level identifiers | `--read-dna` (upstream) | `fpga/xilinx-dna.cfg` (upstream), `fpga/lattice-ecp5-traceid.cfg` (patch) | DNA is upstream in both; ECP5 TraceID is a patch |
 | Version strings that name this build | `--Version` prints `v<version>` | `openocd -v` prints the fpgas.online suffix | packaging glue |
+
+Known limitation of the `stable` OpenOCD track: the 0.12.0 release only
+supports libgpiod 1.x, so on trixie and sid (libgpiod 2.x) and in the arm64
+static build the `linuxgpiod` adapter is left out. `rp1_pio_jtag` (Pi 5) and
+`bcm2835gpio` (Pi 1-4) are unaffected; bookworm and the 32-bit static builds
+keep `linuxgpiod`; the `master` track has it everywhere.
 
 Series: [`patches/openfpgaloader/`](patches/openfpgaloader) (24 patches per
 track), [`patches/openocd/`](patches/openocd) (4 per track). Both tracks
@@ -79,7 +85,7 @@ page, on the rolling release of the current series, named by version:
 - `openocd-<version>-linux-<arch>.tar.gz`: `bin/openocd` plus
   `share/openocd/scripts`. OpenOCD needs its Tcl tree; run it as
   `OPENOCD_SCRIPTS=<dir>/share/openocd/scripts bin/openocd ...` or with `-s`.
-- `latest.json`: `track -> tool -> arch -> {asset, version}` for scripts.
+- `latest.json`: `{"series": "vX.Y", "latest": {track: {tool: {arch: {asset, version}}}}}` for scripts.
 
 Every asset has a `.sha256` beside it.
 
@@ -89,10 +95,13 @@ Every asset has a `.sha256` beside it.
 # Pi 5, NeTV2: detect and read the Device DNA over the RP1 PIO
 sudo openFPGALoader -c rp1pio --pins 27:22:4:17 --detect      # --pins is TDI:TDO:TCK:TMS
 sudo openFPGALoader -b netv2_100 --read-dna                    # cable picked automatically
-sudo openocd -f board/netv2-rpi.cfg -c init -c "xilinx_print_dna [xc7_get_dna xc7.tap]" -c shutdown
+sudo openocd -f board/netv2-rpi.cfg -f fpga/xilinx-dna.cfg -c init \
+    -c "xilinx_print_dna [xc7_get_dna xc7.tap]" -c shutdown     # xilinx-dna.cfg is upstream's
 
-# Any Pi, NeTV2: which board file the picker chose is printed at start-up.
-# Pi 1-4 use bcm2835gpio (Alphamax wiring), Pi 5 without /dev/pio0 falls back to linuxgpiod.
+# Any Pi, NeTV2: board/netv2-rpi.cfg picks bcm2835gpio on a Pi 1-4 (Alphamax wiring),
+# rp1_pio_jtag on a Pi 5 with /dev/pio0, linuxgpiod on a Pi 5 without.
+# PLD naming differs per track: `pld load xc7.pld design.bit` on the git track,
+# `pld load 0 design.bit` on the 0.12.0 release (which addresses PLDs by index).
 
 # SPI flash identification (loads the spiOverJtag bridge into the FPGA)
 sudo openFPGALoader -b netv2_100 --detect -f --flash-info --flash-info-json flash.json
