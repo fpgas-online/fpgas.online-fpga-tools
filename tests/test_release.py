@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 from fpgatools import REPO
 
 spec = importlib.util.spec_from_file_location("release", REPO / "packaging" / "release.py")
@@ -45,6 +47,26 @@ def test_latest_index_picks_newest_per_track_tool_arch():
     assert idx["master"]["openocd"]["arm64"]["asset"] == C
     assert idx["stable"]["openocd"]["armv6"]["asset"] == D
     assert "arm64" not in idx["stable"]["openocd"]
+
+
+def test_collect_assets_walks_one_directory_per_artifact(tmp_path: Path):
+    for art, name in [("static-a", A), ("static-b", B)]:
+        (tmp_path / art).mkdir()
+        (tmp_path / art / name).write_text("x")
+        (tmp_path / art / (name + ".sha256")).write_text("x")
+    (tmp_path / "static-a" / "notes.txt").write_text("x")
+    got = [p.name for p in release.collect_assets(tmp_path)]
+    assert got == sorted([A, A + ".sha256", B, B + ".sha256"])
+
+
+def test_collect_assets_refuses_two_builds_with_one_name(tmp_path: Path):
+    # Two builds claiming one asset name (the armv7 build calling itself
+    # arm64) must stop the upload, not let one overwrite the other.
+    for art in ("static-openfpgaloader-stable-arm64", "static-openfpgaloader-stable-armv7"):
+        (tmp_path / art).mkdir()
+        (tmp_path / art / A).write_text(art)
+    with pytest.raises(SystemExit, match="more than one build"):
+        release.collect_assets(tmp_path)
 
 
 def test_script_is_executable_python(tmp_path: Path):

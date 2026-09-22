@@ -83,11 +83,13 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
+      # One directory per build job (no merge-multiple): builds that claim
+      # the same asset name must not silently overwrite each other on disk;
+      # release.py refuses to upload them instead.
       - uses: actions/download-artifact@v4
         with:
           pattern: static-*
           path: assets/
-          merge-multiple: true
       - name: Upload versioned assets and refresh latest.json
         env:
           GH_TOKEN: ${{ github.token }}
