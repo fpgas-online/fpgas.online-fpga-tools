@@ -20,6 +20,7 @@ from fpgatools import REPO, TOOLS, TRACKS
 from fpgatools.cli import FpgatoolsError
 from fpgatools.gitutil import run_git
 from fpgatools.pins import Pin, Pins, load
+from fpgatools.version import parse_describe
 
 PINS_PATH = REPO / "upstreams.toml"
 META_ROOT = REPO / "build" / "meta"
@@ -108,7 +109,21 @@ def branch_head(meta: Path, ref: str) -> str:
 
 
 def describe(meta: Path, commit: str) -> str:
-    return run_git(["describe", "--tags", "--match", "v[0-9]*", commit], cwd=meta).stdout.strip()
+    """`git describe` against release tags only, validated.
+
+    OpenOCD tags release candidates (v0.12.0-rc1) on master; `--match v[0-9]*`
+    alone would pick one and the resulting `v0.13.0-rc1-45-gabc` is not a
+    version fpgatools can turn into a package version. Excluding them here
+    means a bad describe fails at bump time with a clear message instead of
+    breaking every build on the bump PR.
+    """
+    out = run_git(["describe", "--tags", "--match", "v[0-9]*", "--exclude", "*-rc*",
+                   "--exclude", "*rc[0-9]*", commit], cwd=meta).stdout.strip()
+    try:
+        parse_describe(out)
+    except FpgatoolsError as exc:
+        raise FpgatoolsError(f"{meta.name}: unusable describe for {commit[:7]}: {exc}") from exc
+    return out
 
 
 def commit_date(meta: Path, commit: str) -> str:

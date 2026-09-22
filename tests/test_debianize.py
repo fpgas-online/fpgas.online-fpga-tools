@@ -73,7 +73,11 @@ def test_unsubstituted_token_is_an_error(tmp_path: Path, pins):
                      templates_root=tmp_path / "templates", date_rfc2822=DATE)
     assert "@" not in (out / "debian" / "weird").read_text()
     (templates / "bad").write_text("@TRACK@ and @NOPE@\n")
-    # An unknown token is left alone (not ours), so this must render.
+    # A token nothing substitutes is a template typo: refuse to render.
+    with pytest.raises(FpgatoolsError, match="@NOPE@"):
+        debianize.render("openocd", "stable", pins, "0.0", out,
+                         templates_root=tmp_path / "templates", date_rfc2822=DATE)
+    # An e-mail address is not a token.
+    (templates / "bad").write_text("Maintainer: Someone <me@mith.ro>\n")
     debianize.render("openocd", "stable", pins, "0.0", out,
                      templates_root=tmp_path / "templates", date_rfc2822=DATE)
-    assert "@NOPE@" in (out / "debian" / "bad").read_text()

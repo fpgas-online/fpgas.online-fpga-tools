@@ -30,6 +30,10 @@ static_apk_deps() {
 		libftdi1-dev libftdi1-static libusb-dev eudev-dev \
 		zlib-dev zlib-static hidapi-dev linux-headers argp-standalone \
 		autoconf automake libtool texinfo
+	# The trees under build/src were fetched on the host by another uid;
+	# git inside the container would otherwise refuse them ("dubious
+	# ownership") and fetch-jimtcl.sh could not read the submodule commit.
+	git config --global --add safe.directory '*'
 }
 
 # libgpiod from source, static only. Alpine ships no static libgpiod.

@@ -11,6 +11,12 @@ export OPENOCD_LOCAL_VERSION = @TOOL_VERSION@
 RP1JTAG_PREFIX ?= /usr/local
 export PKG_CONFIG_PATH := $(RP1JTAG_PREFIX)/lib/pkgconfig$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH))
 
+# --enable-linuxgpiod or --disable-linuxgpiod: the 0.12.0 release cannot be
+# built against libgpiod 2.x (trixie, sid); see packaging/linuxgpiod-flag.sh.
+# FPGATOOLS_REPO points at the fpgas.online-fpga-tools checkout.
+FPGATOOLS_REPO ?= /work
+LINUXGPIOD_FLAG := $(shell $(FPGATOOLS_REPO)/packaging/linuxgpiod-flag.sh $(CURDIR))
+
 %:
 	dh $@
 
@@ -26,7 +32,7 @@ override_dh_auto_configure:
 	dh_auto_configure -- \
 		--enable-rp1-pio-jtag \
 		--enable-bcm2835gpio \
-		--enable-linuxgpiod \
+		$(LINUXGPIOD_FLAG) \
 		--enable-sysfsgpio \
 		--enable-remote-bitbang \
 		--enable-internal-jimtcl \
@@ -43,7 +49,9 @@ override_dh_auto_install:
 		debian/@PACKAGE@/usr/lib/udev/rules.d/60-openocd.rules
 	set -e; bin=debian/@PACKAGE@/usr/bin/openocd; \
 	$$bin -v 2>&1 | grep -q -- '@TOOL_VERSION@' || { echo "ERROR: -v does not report @TOOL_VERSION@" >&2; exit 1; }; \
-	for drv in rp1_pio_jtag bcm2835gpio linuxgpiod; do \
+	drivers="rp1_pio_jtag bcm2835gpio"; \
+	[ "$(LINUXGPIOD_FLAG)" = --enable-linuxgpiod ] && drivers="$$drivers linuxgpiod"; \
+	for drv in $$drivers; do \
 		if $$bin -c "adapter driver $$drv" -c shutdown 2>&1 | grep -qi invalid; then \
 			echo "ERROR: adapter driver $$drv missing" >&2; exit 1; \
 		fi; \

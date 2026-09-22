@@ -34,9 +34,10 @@ cd "$src"
 ./bootstrap nosubmodule
 # No static libjaylink on Alpine and no submodule contents in a fetch by
 # commit: the static build has no J-Link support.
+gpiodflag=$("$REPO/packaging/linuxgpiod-flag.sh" "$src")
 ./configure --prefix=/usr \
 	--enable-internal-jimtcl --disable-internal-libjaylink --disable-shared --enable-static \
-	--enable-rp1-pio-jtag --enable-bcm2835gpio --enable-linuxgpiod --enable-sysfsgpio \
+	--enable-rp1-pio-jtag --enable-bcm2835gpio "$gpiodflag" --enable-sysfsgpio \
 	--enable-remote-bitbang \
 	--disable-doxygen-html --disable-doxygen-pdf --disable-werror \
 	LDFLAGS="-static"
@@ -45,7 +46,9 @@ make -j"$(nproc)"
 bin=$src/src/openocd
 static_assert_static "$bin"
 "$bin" -v 2>&1 | grep -q -- "$local_version" || { echo "ERROR: -v does not report $local_version" >&2; exit 1; }
-for drv in rp1_pio_jtag bcm2835gpio linuxgpiod; do
+drivers="rp1_pio_jtag bcm2835gpio"
+[ "$gpiodflag" = --enable-linuxgpiod ] && drivers="$drivers linuxgpiod"
+for drv in $drivers; do
 	if "$bin" -c "adapter driver $drv" -c shutdown 2>&1 | grep -qi invalid; then
 		echo "ERROR: adapter driver $drv missing" >&2; exit 1
 	fi

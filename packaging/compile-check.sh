@@ -59,9 +59,13 @@ openocd)
 	export PKG_CONFIG_PATH="${rp1jtag_prefix:+$rp1jtag_prefix/lib/pkgconfig:}${PKG_CONFIG_PATH:-}"
 	export OPENOCD_LOCAL_VERSION="$version"
 	"$(dirname "$0")/fetch-jimtcl.sh" "$src"
+	# linuxgpiod: the 0.12.0 release only knows the libgpiod 1.x API and
+	# does not compile against 2.x (trixie, sid). Build it where the library
+	# fits (bookworm; master supports both) and leave it out otherwise.
+	gpiodflag=$("$(dirname "$0")/linuxgpiod-flag.sh" "$src")
 	(cd "$src" && ./bootstrap nosubmodule)
 	(cd "$src" && ./configure \
-		--enable-bcm2835gpio --enable-linuxgpiod --enable-sysfsgpio \
+		--enable-bcm2835gpio "$gpiodflag" --enable-sysfsgpio \
 		"$rp1flag" --disable-werror \
 		--enable-internal-jimtcl --disable-internal-libjaylink \
 		--disable-doxygen-html --disable-doxygen-pdf)
@@ -69,7 +73,9 @@ openocd)
 	bin=$src/src/openocd
 	"$bin" -v 2>&1 | tee "$src/version.txt"
 	need "$src/version.txt" "$version" "version string"
-	for drv in bcm2835gpio linuxgpiod sysfsgpio; do
+	drivers="bcm2835gpio sysfsgpio"
+	[ "$gpiodflag" = --enable-linuxgpiod ] && drivers="$drivers linuxgpiod"
+	for drv in $drivers; do
 		if "$bin" -c "adapter driver $drv" -c shutdown 2>&1 | grep -qi invalid; then
 			fail "$drv adapter driver missing"
 		fi

@@ -48,7 +48,7 @@ fpgatools debianize "$tool" "$track"
 # Build-Depends from the rendered control file, nothing duplicated here.
 cd "$src"
 apt-get build-dep -y -q ./
-RP1JTAG_PREFIX=$RP1JTAG_PREFIX dpkg-buildpackage -us -uc -b
+RP1JTAG_PREFIX=$RP1JTAG_PREFIX FPGATOOLS_REPO=$REPO dpkg-buildpackage -us -uc -b
 
 mkdir -p "$OUT"
 cp ../*.deb "$OUT/"

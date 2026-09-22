@@ -8,6 +8,7 @@ binary package name, version and Conflicts are derived rather than typed.
 from __future__ import annotations
 
 import argparse
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -75,16 +76,22 @@ def substitutions(tool: str, track: str, pins: Pins, repo_ver: str) -> Substitut
     )
 
 
+_TOKEN_RE = re.compile(r"@[A-Z_]+@")
+
+
 def substitute(text: str, subs: Substitutions) -> str:
-    for token, value in subs.as_dict().items():
+    """Replace every known @TOKEN@; any other @UPPER_CASE@ left behind is an error.
+
+    A typo in a template (`@VERISON@`) would otherwise ship verbatim inside a
+    control file.
+    """
+    mapping = subs.as_dict()
+    for token, value in mapping.items():
         text = text.replace(token, value)
-    if "@" in text and any(f"@{w}@" in text for w in _known_tokens()):
-        raise FpgatoolsError("template still contains an unsubstituted token")
+    leftover = sorted(set(_TOKEN_RE.findall(text)))
+    if leftover:
+        raise FpgatoolsError(f"template still contains unknown token(s): {', '.join(leftover)}")
     return text
-
-
-def _known_tokens() -> list[str]:
-    return [k.strip("@") for k in Substitutions.__dataclass_fields__]
 
 
 def changelog(subs: Substitutions, date_rfc2822: str) -> str:

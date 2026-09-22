@@ -9,6 +9,23 @@ from fpgatools.pins import Pin, load
 from tests.conftest import git
 
 
+def test_describe_skips_release_candidates(tmp_path: Path):
+    up = tmp_path / "up"
+    up.mkdir()
+    git(up, "init", "-q", "-b", "master")
+    (up / "f").write_text("1\n")
+    git(up, "add", "f")
+    git(up, "commit", "-q", "-m", "one")
+    git(up, "tag", "-a", "v0.12.0", "-m", "v0.12.0")
+    (up / "f").write_text("2\n")
+    git(up, "commit", "-q", "-am", "two")
+    git(up, "tag", "-a", "v0.13.0-rc1", "-m", "rc")
+    (up / "f").write_text("3\n")
+    git(up, "commit", "-q", "-am", "three")
+    head = git(up, "rev-parse", "HEAD")
+    assert bump.describe(up, head).startswith("v0.12.0-2-g")
+
+
 def test_newest_release_tag():
     tags = ["v1.0.0", "v1.1.1", "v2.0.0-rc1", "nightly", "v0.9", "v1.1.0", "v0.13.1"]
     assert bump.newest_release_tag(tags) == "v1.1.1"
