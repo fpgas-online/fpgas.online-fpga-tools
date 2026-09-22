@@ -29,6 +29,12 @@ src=$REPO/build/src/openocd-$track
 
 export OPENOCD_LOCAL_VERSION="$local_version"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+# A static link needs each library's own dependencies on the link line.
+# pkg-config --static adds the Libs.private of the .pc files (libftdi1 ->
+# libusb-1.0); Alpine's hidapi-hidraw.pc has none, so its libudev dependency
+# is passed by hand or the link fails with undefined udev_* references.
+export PKG_CONFIG="pkg-config --static"
+export LIBS="-ludev"
 cd "$src"
 [ -f Makefile ] && make distclean
 ./bootstrap nosubmodule
