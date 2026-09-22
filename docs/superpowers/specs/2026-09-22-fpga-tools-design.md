@@ -258,7 +258,7 @@ Artifacts `debs-<suite>-<arch>-<tool>-<track>`; the publish job (main only)
 calls `mithro/apt-repo-action/.github/workflows/publish-apt.yml@main` with
 `suites: "bookworm trixie sid"`, `architectures: "arm64 armhf"`,
 `keyring-name: fpgas-online-fpga-tools.gpg`, secret `APT_GPG_PRIVATE_KEY`.
-Result: `https://fpgas-online.github.io/fpgas.online-fpga-tools/<suite>/ ./`.
+Result: `https://fpgas.online/fpgas.online-fpga-tools/<suite>/ ./`.
 
 **[decision] Own Pages apt repo, not `fpgas-online/apt`.** See section 2:
 the shared pool cannot distinguish a bookworm build from a trixie build of the
@@ -356,12 +356,17 @@ are unit-tested; git-touching code is exercised by CI's apply step.
 
 ## 11. Blocked on Tim / follow-ups
 
-1. **`APT_GPG_PRIVATE_KEY` secret**: generate a per-repo signing key
-   (`fpgas-online-fpga-tools apt repository <me@mith.ro>`, rsa4096, no expiry
-   as for rp1-jtag) and add it as an Actions secret. Until then the Pages
-   publish job fails and the apt repo is empty; debs are still CI artifacts.
-2. Branch protection and the LFS-archives UI toggle (classifier-blocked /
-   UI-only, per the GitHub.md checklist).
+1. ~~`APT_GPG_PRIVATE_KEY` secret~~ DONE 2026-09-22: key
+   `fpgas-online-fpga-tools apt repository <me@mith.ro>`, RSA-4096, no
+   expiry, fingerprint `A0F3 76D2 174A 0A54 C6F1 3AAA 02E0 6C05 92A2 EA30`,
+   private half in Tim's keyring on ten64 and in the repo's Actions secret.
+   Pin that fingerprint wherever the key is trusted (infra role, as for
+   rp1-jtag's key). Pages is enabled (Actions-fed); the org's custom domain
+   makes the apt URL `https://fpgas.online/fpgas.online-fpga-tools/<suite>/`.
+2. ~~Branch protection~~ DONE; the "include Git LFS objects in archives"
+   toggle is UI-only and still needs Tim. The org setting that lets Actions
+   open pull requests (needed by `update-upstream.yml`) is org-level and
+   needs an `admin:org` token.
 3. Follow-up PR in `fpgas.online-infra`: replace the `mithro.github.io/rp1-jtag`
    source and `*-rp1pio` packages with this repo's source and
    `openfpgaloader-fpgasonline` / `openocd-fpgasonline`. Not done here

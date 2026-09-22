@@ -6,7 +6,7 @@ name: Debian packages + apt repository
 # GitHub Pages through mithro/apt-repo-action:
 #
 #   deb [signed-by=/etc/apt/keyrings/fpgas-online-fpga-tools.gpg] \
-#       https://fpgas-online.github.io/fpgas.online-fpga-tools/<suite>/ ./
+#       https://fpgas.online/fpgas.online-fpga-tools/<suite>/ ./
 #
 # Pull requests build everything and publish nothing.
 #
