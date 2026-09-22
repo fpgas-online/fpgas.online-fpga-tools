@@ -1,0 +1,35 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: openocd
+Upstream-Contact: OpenOCD development mailing list <openocd-devel@lists.sourceforge.net>
+Source: https://github.com/openocd-org/openocd
+Comment: Built by https://github.com/fpgas-online/fpgas.online-fpga-tools from
+ upstream @UPSTREAM_REF@ (@UPSTREAM_COMMIT@) with the patch series in that
+ repository's patches/openocd/@TRACK@/ applied. The rp1_pio_jtag adapter
+ links librp1jtag (https://github.com/mithro/rp1-jtag, Apache-2.0) and
+ PIOLib (https://github.com/raspberrypi/utils, BSD-3-Clause) statically.
+ See the upstream COPYING and LICENSES/ for the per-file licence inventory.
+
+Files: *
+Copyright: 2005-2026 the OpenOCD contributors
+License: GPL-2.0-or-later
+
+Files: src/jtag/drivers/rp1_pio_jtag.c
+       tcl/interface/raspberrypi-rp1-pio.cfg
+       tcl/board/netv2-rpi*.cfg
+       tcl/fpga/lattice-ecp5-traceid.cfg
+Copyright: 2025-2026 Tim Ansell <me@mith.ro>
+License: GPL-2.0-or-later
+
+License: GPL-2.0-or-later
+ This program is free software; you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the Free
+ Software Foundation; either version 2 of the License, or (at your option)
+ any later version.
+ .
+ This program is distributed in the hope that it will be useful, but WITHOUT
+ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ more details.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 2 can be found in /usr/share/common-licenses/GPL-2.

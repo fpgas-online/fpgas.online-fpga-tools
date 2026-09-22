@@ -1,0 +1,47 @@
+#!/usr/bin/make -f
+# debhelper rules for the fpgas.online OpenOCD build. Rendered from
+# packaging/debian/openocd/ by `fpgatools debianize`; @TOOL_VERSION@ is the
+# suffix guess-rev.sh (patched) appends to the AC_INIT version, so that
+# `openocd -v` names this exact build.
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export OPENOCD_LOCAL_VERSION = @TOOL_VERSION@
+
+# librp1jtag and piolib are installed (static only) under this prefix by
+# packaging/build-rp1jtag.sh before dpkg-buildpackage runs.
+RP1JTAG_PREFIX ?= /usr/local
+export PKG_CONFIG_PATH := $(RP1JTAG_PREFIX)/lib/pkgconfig$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH))
+
+%:
+	dh $@
+
+# bootstrap regenerates configure from configure.ac (which the patch series
+# touches); nosubmodule because Debian's libjim is used instead of the
+# bundled jimtcl.
+override_dh_autoreconf:
+	dh_autoreconf ./bootstrap -- nosubmodule
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		--enable-rp1-pio-jtag \
+		--enable-bcm2835gpio \
+		--enable-linuxgpiod \
+		--enable-sysfsgpio \
+		--enable-remote-bitbang \
+		--disable-internal-jimtcl \
+		--disable-doxygen-html \
+		--disable-doxygen-pdf \
+		--disable-werror
+
+override_dh_auto_test:
+
+override_dh_auto_install:
+	dh_auto_install
+	install -D -m 0644 contrib/60-openocd.rules \
+		debian/@PACKAGE@/usr/lib/udev/rules.d/60-openocd.rules
+	set -e; bin=debian/@PACKAGE@/usr/bin/openocd; \
+	$$bin -v 2>&1 | grep -q -- '@TOOL_VERSION@' || { echo "ERROR: -v does not report @TOOL_VERSION@" >&2; exit 1; }; \
+	for drv in rp1_pio_jtag bcm2835gpio linuxgpiod; do \
+		if $$bin -c "adapter driver $$drv" -c shutdown 2>&1 | grep -qi invalid; then \
+			echo "ERROR: adapter driver $$drv missing" >&2; exit 1; \
+		fi; \
+	done

@@ -1,0 +1,39 @@
+Source: @PACKAGE@
+Section: electronics
+Priority: optional
+Maintainer: Tim 'mithro' Ansell <me@mith.ro>
+Build-Depends: debhelper-compat (= 13),
+               cmake,
+               pkg-config,
+               libftdi1-dev,
+               libusb-1.0-0-dev,
+               libhidapi-dev,
+               libudev-dev,
+               libgpiod-dev,
+               zlib1g-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/fpgas-online/fpgas.online-fpga-tools
+Vcs-Git: https://github.com/fpgas-online/fpgas.online-fpga-tools.git
+Vcs-Browser: https://github.com/fpgas-online/fpgas.online-fpga-tools
+
+Package: @PACKAGE@
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Provides: openfpgaloader
+Conflicts: openfpgaloader, openfpgaloader-rp1pio, @CONFLICTS@
+Replaces: openfpgaloader, openfpgaloader-rp1pio, @CONFLICTS@
+Description: openFPGALoader with the fpgas.online patch series (@TRACK@)
+ openFPGALoader is a universal utility for programming FPGAs. This is the
+ fpgas.online build of upstream @UPSTREAM_REF@ (commit @UPSTREAM_COMMIT@)
+ plus a patch series that is not yet upstream:
+  * rp1pio cable: JTAG through the Raspberry Pi 5 RP1 PIO block (librp1jtag,
+    linked in statically) instead of bit-banging PCIe-attached GPIOs;
+  * netv2 / netv2_100 boards with an auto-detected GPIO cable;
+  * tt_fpga board / tt_micropython cable for the Tiny Tapeout FPGA Demo
+    Board (iCE40UP5K behind an RP2040/RP2350 running MicroPython);
+  * --flash-info / --flash-info-json: SPI flash JEDEC id, SFDP parameters
+    and the flash's factory unique id.
+ .
+ It installs /usr/bin/openFPGALoader in place of Debian's openfpgaloader
+ package. The version @VERSION@ names the upstream base first and the
+ fpgas.online patch-set revision after "+fpgasonline.".
