@@ -15,9 +15,10 @@ export PKG_CONFIG_PATH := $(RP1JTAG_PREFIX)/lib/pkgconfig$(if $(PKG_CONFIG_PATH)
 	dh $@
 
 # bootstrap regenerates configure from configure.ac (which the patch series
-# touches); nosubmodule because Debian's libjim and libjaylink are used
-# instead of the bundled jimtcl / libjaylink submodules (a fetch by commit
-# has no submodule contents).
+# touches). nosubmodule: jimtcl/ was populated by packaging/fetch-jimtcl.sh
+# at the commit this OpenOCD records (the distribution jimtcl does not match
+# every upstream version: 0.12.0 fails against 0.83), and Debian's libjaylink
+# replaces that submodule.
 override_dh_autoreconf:
 	dh_autoreconf ./bootstrap -- nosubmodule
 
@@ -28,7 +29,7 @@ override_dh_auto_configure:
 		--enable-linuxgpiod \
 		--enable-sysfsgpio \
 		--enable-remote-bitbang \
-		--disable-internal-jimtcl \
+		--enable-internal-jimtcl \
 		--disable-internal-libjaylink \
 		--disable-doxygen-html \
 		--disable-doxygen-pdf \

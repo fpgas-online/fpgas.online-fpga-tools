@@ -23,14 +23,9 @@ static_force_static_libs
 src=$REPO/build/src/openocd-$track
 [ -f "$src/configure.ac" ] || { echo "ERROR: $src is not a patched tree (run fpgatools apply)" >&2; exit 1; }
 
-# The bundled jimtcl: a shallow fetch by commit has no submodule contents,
-# so clone it at the commit the tree records. Alpine has no static libjim.
-if [ ! -f "$src/jimtcl/configure" ]; then
-	jim_commit=$(cd "$src" && git ls-tree HEAD jimtcl | awk '{print $3}')
-	rm -rf "$src/jimtcl"
-	git clone -q https://github.com/msteveb/jimtcl.git "$src/jimtcl"
-	(cd "$src/jimtcl" && git checkout -q "$jim_commit")
-fi
+# The bundled jimtcl at the commit the tree records (a fetch by commit has
+# no submodule contents; Alpine has no static libjim either).
+"$REPO/packaging/fetch-jimtcl.sh" "$src"
 
 export OPENOCD_LOCAL_VERSION="$local_version"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"

@@ -58,11 +58,12 @@ openocd)
 	[ -n "$rp1jtag_prefix" ] && rp1flag=--enable-rp1-pio-jtag
 	export PKG_CONFIG_PATH="${rp1jtag_prefix:+$rp1jtag_prefix/lib/pkgconfig:}${PKG_CONFIG_PATH:-}"
 	export OPENOCD_LOCAL_VERSION="$version"
+	"$(dirname "$0")/fetch-jimtcl.sh" "$src"
 	(cd "$src" && ./bootstrap nosubmodule)
 	(cd "$src" && ./configure \
 		--enable-bcm2835gpio --enable-linuxgpiod --enable-sysfsgpio \
 		"$rp1flag" --disable-werror \
-		--disable-internal-jimtcl --disable-internal-libjaylink \
+		--enable-internal-jimtcl --disable-internal-libjaylink \
 		--disable-doxygen-html --disable-doxygen-pdf)
 	make -C "$src" -j"$(nproc)"
 	bin=$src/src/openocd

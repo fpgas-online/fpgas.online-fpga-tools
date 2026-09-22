@@ -41,6 +41,7 @@ src=$REPO/build/src/$tool-$track
 echo "==> patched tree at $src"
 
 packaging/build-rp1jtag.sh build/src/piolib build/src/rp1jtag "$RP1JTAG_PREFIX"
+[ "$tool" = openocd ] && packaging/fetch-jimtcl.sh "$src"
 
 fpgatools debianize "$tool" "$track"
 
