@@ -48,9 +48,12 @@ gpiodflag=$("$REPO/packaging/linuxgpiod-flag.sh" "$src")
 	--disable-doxygen-html --disable-doxygen-pdf --disable-werror
 # OpenOCD links through libtool, which drops a plain -static when linking
 # a program; -all-static is libtool's spelling for "pass -static to the
-# compiler". It goes on the make line, not configure's, because configure's
-# own test links call gcc directly and gcc does not know -all-static.
-make -j"$(nproc)" LDFLAGS="-all-static"
+# compiler". Only the final program link may see it: configure's test links
+# and the bundled jimtcl call gcc directly, which rejects the flag. So build
+# everything as configured, then relink just src/openocd.
+make -j"$(nproc)"
+rm -f src/openocd
+make src/openocd LDFLAGS="-all-static"
 
 bin=$src/src/openocd
 static_assert_static "$bin"
