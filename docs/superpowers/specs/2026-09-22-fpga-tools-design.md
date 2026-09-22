@@ -124,15 +124,20 @@ visible; CI runs it and fails on a mismatch unless the patch name carries a
 
 | # | Patch | Source | Licence |
 |---|---|---|---|
-| 1 | `cmake: allow the reported version string to be overridden` | new, 3 lines: `OPENFPGALOADER_VERSION` cache var, default `v${PROJECT_VERSION}` | Apache-2.0 |
-| 2-15 | The `flash-info` series (14 commits, subjects kept verbatim) | `mithro/openFPGALoader@flash-info` | Apache-2.0 |
-| 16 | `Add netv2 and netv2_100 board definitions with auto-detected GPIO cable` | `feature/rp1-jtag-netv2` `55badb9`: rp1pio if `/dev/pio0`, else libgpiod | Apache-2.0 |
-| 17 | `Add rp1pio cable driver for RP1 PIO JTAG on RPi 5` | `rp1-jtag/drivers/openfpgaloader/` (newer buffered driver) + the CMake/cable/jtag glue `integrate.py` applies | Apache-2.0 |
-| 18-22 | Tiny Tapeout FPGA Demo Board series: core (`ttMicropython.{cpp,hpp}`), board + cable defs, `COMM_TT_MICROPYTHON` dispatch, `ENABLE_TT_MICROPYTHON` cmake option, RP2350 hi-Z after programming, macOS/Windows serial | `tt-fpga-support`, with the two pure fix-up commits (`fix issues found in code review`, `remove mcufw debug print`) folded into the commits they fix | Apache-2.0 |
+| 1-14 | The `flash-info` series (14 commits, subjects kept verbatim) | `mithro/openFPGALoader@flash-info` | Apache-2.0 |
+| 15 | `Add netv2 and netv2_100 board definitions with auto-detected cable` | `feature/rp1-jtag-netv2` `55badb9`: rp1pio if `/dev/pio0`, else libgpiod | Apache-2.0 |
+| 16 | `Add rp1pio cable driver for RP1 PIO JTAG on RPi 5` | `rp1-jtag/drivers/openfpgaloader/` (newer buffered driver) + the CMake/cable/jtag glue `integrate.py` applies, via `pkg_check_modules(rp1jtag)` | Apache-2.0 |
+| 17-23 | Tiny Tapeout FPGA Demo Board series: core (`ttMicropython.{cpp,hpp}`), board + cable defs, `COMM_TT_MICROPYTHON` dispatch, `ENABLE_TT_MICROPYTHON` cmake option, RP2350 hi-Z after programming, code-review fixes, macOS/Windows serial | `tt-fpga-support`, all seven commits kept (the fix-up commit touches two earlier commits, so folding it would have meant rewriting history the fork never had) | Apache-2.0 |
+| 24 | `cmake: allow the reported version string to be overridden` | new, 4 lines: `OPENFPGALOADER_VERSION` cache var, default `v${PROJECT_VERSION}` | Apache-2.0 |
 
-Patch 16 depends on 17 only at runtime (`#ifdef ENABLE_RP1_PIO`), so either
-order compiles. Patches 18-22 must be rebased over the upstream removal of
-`USE_DEVICE_ARG` (upstream made `--device` unconditional).
+Patch 15 depends on 16 only at runtime (`#ifdef ENABLE_RP1_PIO`), so either
+order compiles. Patches 17-23 were rebased over the upstream removal of
+`USE_DEVICE_ARG` (upstream made `--device` unconditional); v1.1.1 still has
+the gate, so the stable copy of patch 20 extends it with
+`ENABLE_TT_MICROPYTHON` as the fork did. On v1.1.1 the flash-info series
+is mapped back onto the pre-rename `SPIInterface` / `spiInterface.*` names
+(upstream renamed them to `FlashInterface` after the release) and drops
+master-only context (`--force-terminal-mode`).
 
 `--read-dna` / `--read-xadc` / `--read-register` are upstream since v1.0 and
 need no patch. The Device DNA half of "traceid and devicedna" is therefore
@@ -145,8 +150,8 @@ where openFPGALoader cannot reach the chain.
 |---|---|---|---|
 | 1 | `guess-rev.sh: honour OPENOCD_LOCAL_VERSION` | new, 4 lines: if set, print it in place of the git-derived suffix | GPL-2.0-or-later |
 | 2 | `jtag/drivers: add rp1_pio_jtag adapter (Raspberry Pi 5 RP1 PIO)` | `rp1-jtag/drivers/openocd/rp1_pio_jtag.c` + exactly the `configure.ac`, `src/jtag/drivers/Makefile.am`, `interface.h`, `interfaces.c` edits `integrate.py` makes, + `tcl/interface/raspberrypi-rp1-pio.cfg`, + a `doc/openocd.texi` adapter entry | GPL-2.0-or-later |
-| 3 | `tcl/board: add Kosagi NeTV2 on a Raspberry Pi header` | `netv2-rpi-rp1pio.cfg` (Pi 5, from rp1-jtag `netv2_35t.cfg` generalised to any 7-series via `cpld/xilinx-xc7.cfg`), `netv2-rpi-bcm2835gpio.cfg` (Pi 1-4 direct GPIO, from `alphamax-rpi.cfg`; `NETV2_PERIPHERAL_BASE` variable, default `0x3F000000`), `netv2-rpi-linuxgpiod.cfg` (any Pi; `NETV2_GPIOCHIP` variable, default 0), `netv2-rpi.cfg` (picks rp1pio when `/dev/pio0` exists, else bcm2835gpio), `netv2-rpi-spiflash.cfg` (jtagspi proxy, from rp1-jtag `netv2_35t_spi.cfg`) | GPL-2.0-or-later |
-| 4 | `tcl/fpga: add xilinx-xc7-dna.cfg and lattice-ecp5-traceid.cfg` | `proc xc7_read_dna {tap}` and `proc ecp5_read_traceid {tap}` transcribed from `rpi-hwid/src/rpi_hwid/fpga.py` (FUSE_DNA 0x32 / 6-bit IR / 64-bit DR / bit-reverse / 57-bit mask; UIDCODE_PUB 0x19 / 8-bit IR / 64-bit DR / low 56 bits). Each prints `DNA=0x...` / `TRACEID=0x...` and refuses all-zero or all-one shifts | GPL-2.0-or-later |
+| 3 | `tcl/board: Kosagi NeTV2 driven from a Raspberry Pi 40-pin header` | `netv2-rpi-rp1pio.cfg` (Pi 5, from rp1-jtag `netv2_35t.cfg` generalised to any 7-series), `netv2-rpi-bcm2835gpio.cfg` (Pi 1-4 direct GPIO, Alphamax wiring; on master built on `interface/raspberrypi-native.cfg`'s device-tree SoC detection and CPU-clock delay calibration, on 0.12.0 the same detection inline because that release's file is fixed to a Pi 1), `netv2-rpi-linuxgpiod.cfg` (any Pi; `NETV2_GPIOCHIP` variable, default 0), `netv2-rpi.cfg` (picks rp1pio when `/dev/pio0` exists, linuxgpiod on any other Pi 5, else bcm2835gpio), `netv2-rpi-spiflash.cfg` (jtagspi proxy, from rp1-jtag `netv2_35t_spi.cfg`). The 7-series config is `fpga/xlnx/xc7.cfg` on master and `cpld/xilinx-xc7.cfg` on 0.12.0 | GPL-2.0-or-later |
+| 4 | `tcl/fpga: read a Lattice ECP5 TraceID` | `proc ecp5_read_traceid {tap}` (UIDCODE_PUB 0x19 / 8-bit IR / 64-bit DR / low 56 bits), refusing all-zero or all-one shifts. **No Device DNA patch is needed**: upstream OpenOCD has shipped `fpga/xilinx-dna.cfg` (`xc7_get_dna`, `xilinx_print_dna`) since before 0.12.0, so the survey's plan to transcribe rpi-hwid's FUSE_DNA sequence was dropped in favour of the upstream file | GPL-2.0-or-later |
 
 Pin order reminder written into every NeTV2 file: OpenOCD `jtag_nums` is
 TCK TMS TDI TDO (`4 17 27 22`); openFPGALoader `--pins` is TDI:TDO:TCK:TMS
