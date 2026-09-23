@@ -101,6 +101,20 @@ page, on the rolling release of the current series, named by version:
 
 Every asset has a `.sha256` beside it.
 
+The `libgpiod` backends (openFPGALoader's `-c libgpiod` cable, OpenOCD's
+`linuxgpiod` adapter) speak the kernel's GPIO character device, and the
+rule is the libgpiod each build links: **a build linking libgpiod 2.x
+needs Linux 5.10 or newer**, because that is where the v2 chardev
+interface arrived. On an older kernel libgpiod 2 does not report the
+missing interface, it aborts on an assertion in
+`gpiod_line_request_set_values_subset`.
+
+Today that means the arm64 builds (libgpiod 2.x, so a Pi 4 or 5 on any
+current Raspberry Pi OS) and the armv7/armv6 builds (libgpiod 1.x, which
+works on the much older kernels those Pis run — a Pi 3 on stretch, say).
+The `rp1pio` and `bcm2835gpio` backends do not use libgpiod and are
+unaffected on any kernel.
+
 ## Using the additions
 
 ```bash
