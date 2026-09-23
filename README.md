@@ -199,6 +199,13 @@ upstream breaks us is a red issue rather than a broken publish. When no pin
 moved the matrix still runs, which catches rot in the base images and
 toolchains rather than only upstream changes.
 
+**When things change.** On a day a pin moved, the packages and release
+assets change between about 05:25 and 05:50 UTC (the deb matrix takes about
+10 minutes and the static one about 4, and a bump day builds twice). On any
+other day nothing is published unless someone merges a pull request. A
+fleet-wide read that must not see a tool change mid-way should avoid
+05:20–06:00 UTC.
+
 A series marked ❌ in the issue needs a rebase in a build tree, as above.
 `uv run fpgatools bump --dry-run` reproduces the report locally.
 
