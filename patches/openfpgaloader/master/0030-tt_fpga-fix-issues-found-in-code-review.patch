@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Tue, 17 Mar 2026 20:48:54 +1030
-Subject: [PATCH 22/24] tt_fpga: fix issues found in code review
+Subject: [PATCH 30/32] tt_fpga: fix issues found in code review
 
 Address issues identified by code review:
 

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim Ansell <me@mith.ro>
 Date: Tue, 22 Sep 2026 11:38:57 +0930
-Subject: [PATCH 16/24] Add rp1pio cable driver for RP1 PIO JTAG on RPi 5
+Subject: [PATCH 24/32] Add rp1pio cable driver for RP1 PIO JTAG on RPi 5
 
 On a Raspberry Pi 5 the 40-pin header GPIOs sit behind the RP1
 southbridge on PCIe, so bit-banging JTAG through libgpiod costs a PCIe

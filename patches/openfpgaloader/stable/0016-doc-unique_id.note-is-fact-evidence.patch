@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Tue, 22 Sep 2026 13:29:37 +0930
+Subject: [PATCH 16/32] doc: unique_id.note is "<fact>: <evidence>"
+
+Labels print only the part before the first colon (ie "no factory
+ESN"), so every note keeps that shape: a self-contained fact, then the
+register value it was read from.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ doc/guide/advanced.rst | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/doc/guide/advanced.rst b/doc/guide/advanced.rst
+index 840730e..f2bb6ac 100644
+--- a/doc/guide/advanced.rst
++++ b/doc/guide/advanced.rst
+@@ -139,7 +139,9 @@ mode/dummy clocks, erase types, quad enable) and ``read_4byte``.
+   but returned all ``0x00`` or all ``0xFF``: this is not an ID.
+ * ``none`` with a ``note``: the part has no factory unique ID, as read from
+   the chip itself (ie a Macronix part whose security register says no ESN
+-  was programmed); ``note`` gives the register value.
++  was programmed). ``note`` is ``<fact>: <evidence>``: the text before the
++  first colon is a self-contained statement (``no factory ESN``), the rest
++  the register value it was read from.
+ * ``none`` with a ``null`` note: openFPGALoader knows no unique ID command
+   for this part (unknown manufacturer or family). This says nothing about
+   the silicon, which may have one.

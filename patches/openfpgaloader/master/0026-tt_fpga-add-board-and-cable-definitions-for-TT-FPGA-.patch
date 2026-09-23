@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Mon, 16 Mar 2026 17:46:27 +1030
-Subject: [PATCH 18/24] tt_fpga: add board and cable definitions for TT FPGA
+Subject: [PATCH 26/32] tt_fpga: add board and cable definitions for TT FPGA
  Demo Board
 
 Add COMM_TT_MICROPYTHON communication mode, TT_BOARD() macro, and

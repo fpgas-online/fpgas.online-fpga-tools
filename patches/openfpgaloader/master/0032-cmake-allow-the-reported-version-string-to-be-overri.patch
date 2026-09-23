@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim Ansell <me@mith.ro>
 Date: Tue, 22 Sep 2026 11:41:59 +0930
-Subject: [PATCH 24/24] cmake: allow the reported version string to be
+Subject: [PATCH 32/32] cmake: allow the reported version string to be
  overridden
 
 --Version printed v${PROJECT_VERSION} unconditionally, so a distribution

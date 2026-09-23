@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Mon, 21 Sep 2026 19:25:22 +0930
-Subject: [PATCH 12/24] spiFlash: Macronix factory ESN, and say why there is
+Subject: [PATCH 12/32] spiFlash: Macronix factory ESN, and say why there is
  none
 
 Macronix has no unique ID command: a 128-bit ESN is only programmed in

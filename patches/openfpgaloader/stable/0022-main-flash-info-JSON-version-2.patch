@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Tue, 22 Sep 2026 20:19:43 +0930
+Subject: [PATCH 22/32] main: flash-info JSON version 2
+
+The contract says version is increased whenever a field changes meaning,
+and 9b682b6 changed "sfdp": null from "no SFDP, or the SFDP read failed"
+to "the part has no SFDP" only. A consumer can now tell a version 2
+null (positive evidence the part does not implement RSFDP) from a
+version 1 one. Version 2 documents also carry extended_id. The doc lists
+what each version means.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ doc/guide/advanced.rst | 8 +++++++-
+ src/main.cpp           | 2 +-
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/doc/guide/advanced.rst b/doc/guide/advanced.rst
+index 07c2b32..12e1b68 100644
+--- a/doc/guide/advanced.rst
++++ b/doc/guide/advanced.rst
+@@ -117,7 +117,7 @@ file and a zero exit status mean the content was read:
+ 
+ .. code-block:: json
+ 
+-    {"format": "openFPGALoader-flash-info", "version": 1, "flashes": [
++    {"format": "openFPGALoader-flash-info", "version": 2, "flashes": [
+       {"jedec_id": "0x010219", "manufacturer_id": "0x01", "memory_type": "0x02",
+        "capacity": "0x19", "manufacturer": "Spansion",
+        "manufacturer_jep106": "Spansion / Cypress / Infineon",
+@@ -178,6 +178,12 @@ fields may be added without a new ``version``: ignore unknown fields. The
+ openFPGALoader version string does not tell whether ``--flash-info`` is
+ available: check for ``--flash-info-json`` in ``--help`` instead.
+ 
++Versions:
++
++* ``1``: first version. ``sfdp`` could be ``null`` after a failed SFDP read.
++* ``2``: ``sfdp`` is ``null`` only when the part has no SFDP (a failed read
++  is an error), and ``extended_id`` is added.
++
+ .. NOTE::
+   On FPGAs where the flash is only reachable through the FPGA (ie Xilinx,
+   through a *spiOverJtag* bridge), every ``--flash-info`` read, including the
+diff --git a/src/main.cpp b/src/main.cpp
+index 470a303..97220d0 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -155,7 +155,7 @@ static bool write_flash_info_json(const std::string &path)
+ 		return false;
+ 	}
+ 	std::string j = "{\"format\": \"openFPGALoader-flash-info\", "
+-		"\"version\": 1, \"flashes\": [";
++		"\"version\": 2, \"flashes\": [";
+ 	for (size_t i = 0; i < recs.size(); i++)
+ 		j += (i ? ", " : "") + recs[i];
+ 	j += "]}\n";

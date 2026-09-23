@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Tue, 22 Sep 2026 20:13:04 +0930
+Subject: [PATCH 20/32] spiFlashSfdp: a failed SFDP read is an error, not "no
+ SFDP"
+
+SFDP::parse() returned false both for an answer without the SFDP
+signature and for a failed transfer, table reads were not checked, and
+display_info() only warned: --flash-info-json then wrote "sfdp": null
+(or a partial SFDP) for a flash access that failed, although the file is
+only to be written when every access succeeded.
+
+A failed header, parameter header or table read now throws, and
+--flash-info fails as for any other failed read. parse() returns false
+only when the answer has no SFDP signature, so "sfdp": null means the
+part does not implement RSFDP (0x5A), which is always sent.
+
+Checked on an Arty (0x012018, SFDP 1.6, 6 tables) and an Acorn
+CLE-215 (S25FL256S: no SFDP signature, null, exit 0).
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ src/spiFlash.cpp     | 12 +++++-------
+ src/spiFlashSfdp.cpp | 10 +++++++---
+ src/spiFlashSfdp.hpp |  3 ++-
+ 3 files changed, 14 insertions(+), 11 deletions(-)
+
+diff --git a/src/spiFlash.cpp b/src/spiFlash.cpp
+index e08142d..b5600dc 100644
+--- a/src/spiFlash.cpp
++++ b/src/spiFlash.cpp
+@@ -946,14 +946,12 @@ void SPIFlash::display_info()
+ 		throw std::runtime_error(msg);
+ 	}
+ 
+-	/* SFDP: failure is not an error (old parts) */
++	/* SFDP: always asked. No SFDP signature in the answer (old parts)
++	 * is not an error, a failed read is
++	 */
+ 	SFDP sfdp;
+-	try {
+-		sfdp.parse([this](uint32_t addr, uint8_t *buf, uint32_t len) {
+-				return read_sfdp(addr, buf, len);});
+-	} catch (std::exception &e) {
+-		printWarn(std::string("SFDP read failed: ") + e.what());
+-	}
++	sfdp.parse([this](uint32_t addr, uint8_t *buf, uint32_t len) {
++			return read_sfdp(addr, buf, len);});
+ 
+ 	printf("\nSPI Flash information\n");
+ 	printf("JEDEC ID          : 0x%06x (manufacturer 0x%02x, type 0x%02x, "
+diff --git a/src/spiFlashSfdp.cpp b/src/spiFlashSfdp.cpp
+index 83b332f..1c65d6a 100644
+--- a/src/spiFlashSfdp.cpp
++++ b/src/spiFlashSfdp.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include <stdio.h>
+ 
++#include <stdexcept>
+ #include <string>
+ #include <vector>
+ 
+@@ -50,7 +51,7 @@ static bool read_table(SFDP::read_fn_t rd, const sfdp_param_header_t &hdr,
+ 		len = SFDP_MAX_DWORDS;
+ 	std::vector<uint8_t> buf(len * 4);
+ 	if (!rd(hdr.ptp, buf.data(), len * 4))
+-		return false;
++		throw std::runtime_error("SFDP table read failed");
+ 	table.clear();
+ 	for (int i = 0; i < len; i++)
+ 		table.push_back(le32(&buf[i * 4]));
+@@ -66,7 +67,10 @@ bool SFDP::parse(read_fn_t rd)
+ 	_bfpt.clear();
+ 	_4bait.clear();
+ 
+-	if (!rd(0, hdr, 8) || le32(hdr) != SFDP_SIGNATURE)
++	/* a transfer failure is an error; no signature means no SFDP */
++	if (!rd(0, hdr, 8))
++		throw std::runtime_error("SFDP header read failed");
++	if (le32(hdr) != SFDP_SIGNATURE)
+ 		return false;
+ 
+ 	_minor = hdr[4];
+@@ -77,7 +81,7 @@ bool SFDP::parse(read_fn_t rd)
+ 
+ 	std::vector<uint8_t> ph(nph * 8);
+ 	if (!rd(8, ph.data(), nph * 8))
+-		return false;
++		throw std::runtime_error("SFDP parameter headers read failed");
+ 
+ 	for (int i = 0; i < nph; i++) {
+ 		const uint8_t *p = &ph[i * 8];
+diff --git a/src/spiFlashSfdp.hpp b/src/spiFlashSfdp.hpp
+index b1dd902..ade0b03 100644
+--- a/src/spiFlashSfdp.hpp
++++ b/src/spiFlashSfdp.hpp
+@@ -57,7 +57,8 @@ class SFDP {
+ 		/*!
+ 		 * \brief read and parse SFDP structures
+ 		 * \param[in] rd: SFDP read callback
+-		 * \return false when no (valid) SFDP header is found
++		 * \return false when the answer has no SFDP signature (no SFDP)
++		 * \throw std::runtime_error when a read fails
+ 		 */
+ 		bool parse(read_fn_t rd);
+ 
