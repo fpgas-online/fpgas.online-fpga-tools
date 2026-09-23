@@ -64,8 +64,10 @@ Goals:
 4. Static (musl) binaries for arm64, armv7 and armv6 uploaded to GitHub
    Releases, with the same version string as the debs.
 5. Versions that state both the upstream base and the fpgas.online patch level.
-6. Automation that notices upstream movement and opens a PR with the pin bump
-   and the result of re-applying the series.
+6. Automation that notices upstream movement. Amended 2026-09-23: rather
+   than opening a pull request for a human, it bumps the pins daily, builds
+   everything against them and publishes only if all of it passed (see
+   "Upstream tracking").
 
 Non-goals:
 
@@ -101,7 +103,7 @@ fpgas.online-fpga-tools/
     ci.yml                      lint + tests + apply-all-series + native amd64 compile check
     debs.yml                    matrix build, publish to Pages (main only)
     static.yml                  matrix static build, upload to the series release (main only)
-    update-upstream.yml         weekly pin bump PR
+    daily.yml                   daily pin bump, full verify, promote + publish
   docs/superpowers/specs/       this document
   build/                        (gitignored) upstream working trees
 ```
@@ -302,17 +304,43 @@ compiles anywhere, it just has nothing to drive on amd64). PRs also run
 `packaging/compile-check.sh` is the developer-side equivalent (configure,
 build, assert cables/adapters/version) without packaging.
 
-### Upstream tracking (`update-upstream.yml`, weekly + dispatch)
+### Upstream tracking (`daily.yml`, daily 05:23 UTC + dispatch)
+
+Amended 2026-09-23 on Tim's instruction ("automatically bump the `-git`
+revision and verify everything builds at least daily"). It replaces the
+weekly `update-upstream.yml`, which opened a pull request a human merged;
+that workflow is deleted.
 
 `fpgatools bump` does `git clone --bare --filter=blob:none` of each upstream,
 finds the default-branch head and the newest non-rc `v*` tag, rewrites
 `upstreams.toml` (`commit`, `describe`, `date`, stable `ref`/`commit`), runs
 `fpgatools apply` for every series and records per-series OK / CONFLICT
-(with the failing patch name). If anything changed it opens a PR with that
-report in the body. Limitation stated in the workflow: a PR opened with
-`GITHUB_TOKEN` does not trigger `pull_request` workflows, so the apply report
-in the body is the first signal and CI runs once a human pushes to or
-re-opens the PR. A conflicting bump is still a PR so the drift is visible.
+(with the failing patch name). `--fail-on-conflict` makes a series that
+stopped applying end the run.
+
+The day then goes:
+
+1. **candidate** — bump, commit the pins and push branch `auto/pin-candidate`.
+   When no pin moved the candidate is main's own commit, so the rest still
+   runs: the daily rebuild catches base-image and toolchain rot, not only
+   upstream changes.
+2. **verify** — the full deb matrix (24 jobs) and full static matrix (12)
+   against the candidate, by calling `debs.yml` and `static.yml` with a
+   `ref` input. A called workflow sees the *caller's* `github.event_name`
+   and `github.ref`, so both publish jobs gate on `inputs.ref == ''` rather
+   than on the event: a candidate build cannot publish.
+3. **promote** — only if every build passed and a pin moved: fast-forward
+   main to the candidate (refused, and the run goes red, if main moved
+   meanwhile), then `gh workflow run` `debs.yml` and `static.yml` on main.
+   Publishing therefore always comes from a run of main itself. The
+   dispatch is needed because a push made with `GITHUB_TOKEN` does not
+   start workflow runs.
+4. **report** — any failure opens, or comments on, a single open issue
+   titled "Daily upstream bump is red", carrying the bump report. The pins
+   on main are untouched, so a red day publishes nothing.
+
+Cost: a bump day builds the matrix twice (verify, then main). That was the
+accepted trade for never publishing an unverified pin.
 
 ## 9. Tooling (`fpgatools`)
 
@@ -365,8 +393,8 @@ are unit-tested; git-touching code is exercised by CI's apply step.
    makes the apt URL `https://fpgas.online/fpgas.online-fpga-tools/<suite>/`.
 2. ~~Branch protection~~ DONE; the "include Git LFS objects in archives"
    toggle is UI-only and still needs Tim. The org setting that lets Actions
-   open pull requests (needed by `update-upstream.yml`) is org-level and
-   needs an `admin:org` token.
+   open pull requests is no longer needed by anything here: `daily.yml`
+   pushes and dispatches rather than opening pull requests (2026-09-23).
 3. Follow-up PR in `fpgas.online-infra`: replace the `mithro.github.io/rp1-jtag`
    source and `*-rp1pio` packages with this repo's source and
    `openfpgaloader-fpgasonline` / `openocd-fpgasonline`. Not done here

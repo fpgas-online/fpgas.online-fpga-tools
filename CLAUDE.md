@@ -13,7 +13,7 @@ changing structure; `README.md` is the user-facing description.
 - `fpgatools/` — stdlib-only Python CLI: `fetch`, `apply`, `export`, `compare`,
   `version`, `debianize`, `bump`.
 - `packaging/` — debian templates, Alpine static scripts, librp1jtag build helper.
-- `.github/workflows/` — `ci.yml`, `debs.yml`, `static.yml`, `update-upstream.yml`.
+- `.github/workflows/` — `ci.yml`, `debs.yml`, `static.yml`, `daily.yml` (the daily bump, full rebuild and publish).
 - `build/` (gitignored) — upstream working trees under `build/src/<name>[-<track>]`.
 
 ## Commands
