@@ -38,7 +38,7 @@ static build the `linuxgpiod` adapter is left out. `rp1_pio_jtag` (Pi 5) and
 `bcm2835gpio` (Pi 1-4) are unaffected; bookworm and the 32-bit static builds
 keep `linuxgpiod`; the `master` track has it everywhere.
 
-Series: [`patches/openfpgaloader/`](patches/openfpgaloader) (24 patches per
+Series: [`patches/openfpgaloader/`](patches/openfpgaloader) (32 patches per
 track), [`patches/openocd/`](patches/openocd) (4 per track). Both tracks
 carry the same series; where the code differs between the upstream release
 and master (a class rename, a moved Tcl file, an older adapter table) the two
@@ -132,7 +132,7 @@ packaging/debian/<tool>/  debhelper templates rendered by `fpgatools debianize`
 packaging/static/         Alpine (musl) static build scripts
 packaging/build-deb.sh    what the deb workflow runs inside debian:<suite>
 packaging/release.py      uploads static assets to the series release
-.github/workflows/        ci.yml, debs.yml, static.yml, update-upstream.yml
+.github/workflows/        ci.yml, debs.yml, static.yml, daily.yml
 docs/superpowers/         design spec and implementation plan
 ```
 
@@ -169,12 +169,24 @@ docker run --rm -v "$PWD:/work" -w /work -e REPO=/work alpine:3.21 \
 
 ### Following upstream
 
-`update-upstream.yml` runs `fpgatools bump` weekly: it moves the `master`
-pins to the upstream heads, the `stable` pins to the newest release tag,
-re-applies every series and opens a pull request whose body says which
-series still apply. A series marked ❌ needs a rebase in a build tree as
-above. A pull request opened by the workflow's own token does not trigger CI
-until someone pushes to it or reopens it.
+`daily.yml` runs every day at 05:23 UTC and needs nobody:
+
+1. `fpgatools bump` moves the `master` pins to the upstream heads and the
+   `stable` pins to the newest release tag, and re-applies every series.
+2. The whole deb matrix and the whole static matrix build against those
+   candidate pins, on a branch, publishing nothing.
+3. Only if every one of those builds passed and a pin actually moved does
+   main fast-forward to the candidate, which builds again and publishes.
+4. Any failure — a series that stopped applying, a build that broke — leaves
+   the pins alone and opens (or updates) one issue naming what broke.
+
+So a `-git` package follows upstream master within a day, and a day when
+upstream breaks us is a red issue rather than a broken publish. When no pin
+moved the matrix still runs, which catches rot in the base images and
+toolchains rather than only upstream changes.
+
+A series marked ❌ in the issue needs a rebase in a build tree, as above.
+`uv run fpgatools bump --dry-run` reproduces the report locally.
 
 ## Publishing
 

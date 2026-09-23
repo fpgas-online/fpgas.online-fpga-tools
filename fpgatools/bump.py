@@ -1,17 +1,18 @@
 """Move the upstream pins forward and report whether the series still apply.
 
-`fpgatools bump` is what the weekly update-upstream workflow runs. It looks at
+`fpgatools bump` is what the daily.yml workflow runs. It looks at
 each upstream with a metadata-only clone (commits and trees, no blobs), moves
 every [name.master] entry to the default branch head, moves [name.stable] to
 the newest release tag, moves the untracked pins (librp1jtag, piolib) to their
 branch heads, rewrites upstreams.toml in place and then tries to apply every
-patch series so the pull request body can say which ones need a rebase.
+patch series so the run can say which ones need a rebase.
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -71,6 +72,12 @@ class BumpReport:
     def changed(self) -> bool:
         return any(u.changed for u in self.updates)
 
+    def conflicts(self) -> list[str]:
+        """"<tool>/<track>: <status>" for each series that no longer applies."""
+        return [f"{tool}/{track}: {status}"
+                for (tool, track), status in sorted(self.applied.items())
+                if status != "OK"]
+
     def markdown(self) -> str:
         lines = ["## Upstream pins", ""]
         lines += [f"- {u.describe_change()}" for u in self.updates]
@@ -81,10 +88,9 @@ class BumpReport:
                 lines.append(f"- {mark} `{tool}/{track}`: {status}")
         lines += [
             "",
-            "A pull request opened with `GITHUB_TOKEN` does not trigger the",
-            "`pull_request` workflows; push a commit to this branch (or close and",
-            "reopen it) to run CI. A ❌ above means that series needs rebasing:",
-            "`fpgatools apply <tool> <track>` reproduces the conflict locally.",
+            "A ❌ above means that series needs rebasing, and the pins stay where",
+            "they are until it does: `fpgatools apply <tool> <track>` reproduces",
+            "the conflict locally, and CLAUDE.md says how to re-export the series.",
         ]
         return "\n".join(lines) + "\n"
 
@@ -245,6 +251,11 @@ def _cmd(args: argparse.Namespace) -> int:
         Path(args.report).write_text(report.markdown())
     if not report.changed:
         print("no pin changed")
+    if args.fail_on_conflict and report.conflicts():
+        print("series that no longer apply:", file=sys.stderr)
+        for line in report.conflicts():
+            print(f"  {line}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -253,4 +264,6 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--dry-run", action="store_true", help="report, but leave upstreams.toml alone")
     p.add_argument("--no-apply", action="store_true", help="skip re-applying the patch series")
     p.add_argument("--report", metavar="FILE", help="write a Markdown report (PR body) here")
+    p.add_argument("--fail-on-conflict", action="store_true",
+                   help="exit non-zero if a series no longer applies (daily.yml wants this)")
     p.set_defaults(func=_cmd)

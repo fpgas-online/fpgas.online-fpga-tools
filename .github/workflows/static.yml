@@ -5,11 +5,27 @@ name: Static binaries + GitHub Release
 # the runner's binfmt emulation). On main the results are uploaded to the
 # rolling release of the current vX.Y series with versioned filenames, plus
 # a latest.json index; pull requests only build.
+#
+# daily.yml calls this workflow to build candidate upstream pins before they
+# reach main; such a call passes `ref` and must never upload to the release.
+# A called workflow sees the CALLER's github.event_name and github.ref, so
+# the release gate keys on `ref` being empty, not on the event.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit or branch to build (default: this workflow's own ref)"
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      ref:
+        description: "Commit or branch to build; uploading is disabled when set"
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -37,6 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           fetch-depth: 0 # fpgatools version needs the series tags
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --quiet
@@ -73,7 +90,7 @@ jobs:
 
   release:
     name: upload to the series release
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:
