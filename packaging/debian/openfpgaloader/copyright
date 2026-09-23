@@ -5,8 +5,9 @@ Source: https://github.com/trabucayre/openFPGALoader
 Comment: Built by https://github.com/fpgas-online/fpgas.online-fpga-tools from
  upstream @UPSTREAM_REF@ (@UPSTREAM_COMMIT@) with the patch series in that
  repository's patches/openfpgaloader/@TRACK@/ applied. The rp1pio cable
- driver links librp1jtag (https://github.com/mithro/rp1-jtag, Apache-2.0)
- and PIOLib (https://github.com/raspberrypi/utils, BSD-3-Clause) statically.
+ driver uses the shared librp1jtag0 (https://github.com/mithro/rp1-jtag,
+ Apache-2.0), which uses libpio0 (https://github.com/raspberrypi/utils,
+ BSD-3-Clause).
 
 Files: *
 Copyright: 2019-2026 Gwenhael Goavec-Merou <gwenhael.goavec-merou@trabucayre.com>

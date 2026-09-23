@@ -5,8 +5,9 @@ Source: https://github.com/openocd-org/openocd
 Comment: Built by https://github.com/fpgas-online/fpgas.online-fpga-tools from
  upstream @UPSTREAM_REF@ (@UPSTREAM_COMMIT@) with the patch series in that
  repository's patches/openocd/@TRACK@/ applied. The rp1_pio_jtag adapter
- links librp1jtag (https://github.com/mithro/rp1-jtag, Apache-2.0) and
- PIOLib (https://github.com/raspberrypi/utils, BSD-3-Clause) statically.
+ uses the shared librp1jtag0 (https://github.com/mithro/rp1-jtag,
+ Apache-2.0), which uses libpio0 (https://github.com/raspberrypi/utils,
+ BSD-3-Clause).
  See the upstream COPYING and LICENSES/ for the per-file licence inventory.
 
 Files: *

@@ -4,9 +4,10 @@
 #
 #   packaging/build-rp1jtag.sh <piolib-src> <rp1jtag-src> <prefix>
 #
-# Only static archives are installed: the tools must not gain a runtime
-# dependency on a library no distribution packages. Works with glibc (Debian)
-# and musl (Alpine); needs cmake, a C compiler and pkg-config.
+# Used by the static release builds (packaging/static/), whose binaries must
+# run with no library beyond the kernel: only static archives are installed.
+# The Debian packages use the shared librp1jtag0 instead (build-libs.sh).
+# Works with glibc and musl (Alpine); needs cmake, a C compiler and pkg-config.
 set -eu
 
 piolib_src=$1

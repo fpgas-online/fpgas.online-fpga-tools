@@ -13,6 +13,7 @@ Build-Depends: debhelper-compat (= 13),
                libhidapi-dev,
                libjaylink-dev,
                libgpiod-dev,
+               librp1jtag-dev,
                libcapstone-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/fpgas-online/fpgas.online-fpga-tools
@@ -31,8 +32,7 @@ Description: OpenOCD with the fpgas.online patch series (@TRACK@)
  build of upstream @UPSTREAM_REF@ (commit @UPSTREAM_COMMIT@) plus a patch
  series that is not yet upstream:
   * rp1_pio_jtag adapter: JTAG through the Raspberry Pi 5 RP1 PIO block
-    (librp1jtag, linked in statically) instead of bit-banging
-    PCIe-attached GPIOs;
+    (the shared librp1jtag0) instead of bit-banging PCIe-attached GPIOs;
   * board/netv2-rpi*.cfg: the Kosagi NeTV2 on a Raspberry Pi header via
     bcm2835gpio (Pi 1-4), rp1_pio_jtag (Pi 5) or linuxgpiod, with a
     picker and a jtagspi configuration-flash variant;

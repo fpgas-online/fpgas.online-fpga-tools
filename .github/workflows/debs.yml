@@ -1,9 +1,11 @@
 name: Debian packages + apt repository
 
 # Every push to main builds openfpgaloader-fpgasonline[-git] and
-# openocd-fpgasonline[-git] for each supported suite and architecture, then
-# publishes one signed flat apt repository per suite to this repository's
-# GitHub Pages through mithro/apt-repo-action:
+# openocd-fpgasonline[-git] for each supported suite and architecture,
+# together with the shared librp1jtag0 (and, where Raspberry Pi's archive has
+# none, libpio0) they depend on, then publishes one signed flat apt
+# repository per suite to this repository's GitHub Pages through
+# mithro/apt-repo-action:
 #
 #   deb [signed-by=/etc/apt/keyrings/fpgas-online-fpga-tools.gpg] \
 #       https://fpgas.online/fpgas.online-fpga-tools/<suite>/ ./
@@ -42,8 +44,44 @@ permissions:
   contents: read
 
 jobs:
+  # The shared libraries, once per suite and architecture: every tool build
+  # of that suite/arch builds against these exact packages, and they are
+  # published once.
+  libs:
+    name: libs (${{ matrix.suite }} ${{ matrix.arch }})
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [bookworm, trixie, sid]
+        arch: [arm64, armhf]
+        include:
+          - arch: arm64
+            platform: linux/arm64
+          - arch: armhf
+            platform: linux/arm/v7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # fpgatools version needs the series tags
+
+      - name: Build in debian:${{ matrix.suite }} for ${{ matrix.arch }}
+        run: |
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work -e SUITE=${{ matrix.suite }} \
+            "debian:${{ matrix.suite }}" \
+            sh -ec 'packaging/build-libs.sh'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debs-${{ matrix.suite }}-${{ matrix.arch }}-libs
+          path: built-libs/*.deb
+          if-no-files-found: error
+
   build:
     name: ${{ matrix.tool }}/${{ matrix.track }} (${{ matrix.suite }} ${{ matrix.arch }})
+    needs: libs
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
@@ -63,10 +101,16 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 0 # fpgatools version needs the series tags
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: debs-${{ matrix.suite }}-${{ matrix.arch }}-libs
+          path: built-libs
+
       - name: Build in debian:${{ matrix.suite }} for ${{ matrix.arch }}
         run: |
           docker run --rm --platform "${{ matrix.platform }}" \
-            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work \
+            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work -e SUITE=${{ matrix.suite }} \
+            -e LIBS_DIR=/work/built-libs \
             "debian:${{ matrix.suite }}" \
             sh -ec 'packaging/build-deb.sh ${{ matrix.tool }} ${{ matrix.track }}'
 
@@ -87,7 +131,7 @@ jobs:
       pages: write
       id-token: write
     if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: build
+    needs: [libs, build]
     # Pinned by commit: this job hands the signing key to the called workflow.
     # main was e7763b9 on 2026-09-22; bump deliberately.
     uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@e7763b9f6a7795cd6b97b3972921905a33b41c6f
