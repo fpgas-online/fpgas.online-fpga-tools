@@ -160,3 +160,50 @@ def test_cli_version_errors(capsys):
     assert "unknown track" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         cli.main(["version", "openocd"])  # track missing
+
+
+def _rp1jtag_tree(tmp_path, cmake="project(rp1-jtag\n    VERSION 0.1.0\n    LANGUAGES C CXX\n)\n"):
+    tree = tmp_path / "rp1jtag"
+    tree.mkdir()
+    (tree / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.16)\n" + cmake)
+    return tree
+
+
+def test_library_version_rp1jtag(tmp_path, real_pins):
+    pin = real_pins.pin("rp1jtag")
+    date = pin.date.replace("-", "")
+    v = version.library_version("rp1jtag", real_pins, "0.0.post43", _rp1jtag_tree(tmp_path))
+    assert v == f"0.1.0+git{date}.{pin.commit[:7]}+fpgasonline.0.0.post43"
+
+
+def test_library_version_rp1jtag_sorts_above_rp1_jtags_own_packages(tmp_path, real_pins):
+    """mithro/rp1-jtag published librp1jtag0 0.0.post87 under the same name."""
+    import shutil
+    import subprocess
+
+    if shutil.which("dpkg") is None:
+        pytest.skip("needs dpkg --compare-versions")
+    v = version.library_version("rp1jtag", real_pins, "0.0", _rp1jtag_tree(tmp_path))
+    subprocess.run(["dpkg", "--compare-versions", v, "gt", "0.0.post87"], check=True)
+
+
+def test_library_version_piolib(real_pins):
+    pin = real_pins.pin("piolib")
+    date = pin.date.replace("-", "")
+    v = version.library_version("piolib", real_pins, "1.2")
+    assert v == f"{date}+git.{pin.commit[:7]}+fpgasonline.1.2"
+
+
+def test_library_version_errors(tmp_path, real_pins):
+    with pytest.raises(FpgatoolsError, match="unknown library"):
+        version.library_version("gcc", real_pins, "0.0")
+    with pytest.raises(FpgatoolsError, match="source tree"):
+        version.library_version("rp1jtag", real_pins, "0.0")
+    with pytest.raises(FpgatoolsError, match="fetch rp1jtag"):
+        version.library_version("rp1jtag", real_pins, "0.0", tmp_path / "missing")
+    with pytest.raises(version.VersionError, match="VERSION"):
+        version.library_version("rp1jtag", real_pins, "0.0",
+                                _rp1jtag_tree(tmp_path, "project(rp1-jtag C)\n"))
+    undated = pins.Pins.from_dict({"piolib": {"url": "u", "ref": "master", "commit": "a" * 40}})
+    with pytest.raises(FpgatoolsError, match="needs a date"):
+        version.library_version("piolib", undated, "0.0")

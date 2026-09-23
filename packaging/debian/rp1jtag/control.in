@@ -1,0 +1,36 @@
+Source: @SOURCE@
+Section: libs
+Priority: optional
+Maintainer: Tim 'mithro' Ansell <me@mith.ro>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.16),
+               libpio-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/fpgas-online/fpgas.online-fpga-tools
+Vcs-Git: https://github.com/fpgas-online/fpgas.online-fpga-tools.git
+Vcs-Browser: https://github.com/fpgas-online/fpgas.online-fpga-tools
+
+Package: librp1jtag0
+Architecture: any
+Multi-Arch: same
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: JTAG through the Raspberry Pi 5 RP1 PIO block (shared library)
+ librp1jtag shifts JTAG through the RP1 PIO block of the Raspberry Pi 5
+ instead of bit-banging PCIe-attached GPIOs. openfpgaloader-fpgasonline
+ (the rp1pio cable) and openocd-fpgasonline (the rp1_pio_jtag adapter) use
+ it. This is the fpgas.online build of @UPSTREAM_URL@
+ @UPSTREAM_REF@ (commit @UPSTREAM_COMMIT@).
+ .
+ It exports the rp1_jtag_* API only, and reaches /dev/pio0 through the
+ system PIOLib (libpio0) rather than a private copy of it.
+
+Package: librp1jtag-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: librp1jtag0 (= ${binary:Version}), ${misc:Depends}
+Description: JTAG through the Raspberry Pi 5 RP1 PIO block (development files)
+ librp1jtag shifts JTAG through the RP1 PIO block of the Raspberry Pi 5.
+ .
+ This package contains the header, the linker symlink and the pkg-config
+ file (rp1jtag.pc) needed to build against librp1jtag0.

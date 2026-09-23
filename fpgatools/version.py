@@ -9,6 +9,10 @@ Nothing here is typed by hand (see CLAUDE.md "Versions are derived"):
   stable track and `<upstream base>+git<YYYYMMDD>.<sha7>+fpgasonline.<R>` on
   master, where the base, date and sha come from `upstreams.toml`.
 * The string each patched binary reports is derived from the same parts.
+* The shared libraries are versioned the same way from their single pin:
+  librp1jtag0 `<rp1-jtag project VERSION>+git<YYYYMMDD>.<sha7>+fpgasonline.<R>`
+  and our libpio0 (sid only) `<YYYYMMDD>+git.<sha7>+fpgasonline.<R>`, the
+  date-first shape Raspberry Pi's own libpio0 versions use.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ import argparse
 import re
 from pathlib import Path
 
-from fpgatools import REPO, TOOLS, TRACKS
+from fpgatools import LIBS, REPO, TOOLS, TRACKS
 from fpgatools.cli import FpgatoolsError
 from fpgatools.gitutil import git_output, run_git
 from fpgatools.pins import Pin, Pins, load
@@ -124,6 +128,54 @@ def tool_version_string(tool: str, track: str, pins: Pins, repo_version: str) ->
         return f"+fpgasonline.{repo_version}"
     _base, distance, sha = _master_parts(tool, pins.pin(tool, track))
     return f"-{distance:05d}-g{sha}+fpgasonline.{repo_version}"
+
+
+# rp1-jtag declares its release in CMake: project(rp1-jtag VERSION 0.1.0 ...).
+_CMAKE_PROJECT_VERSION_RE = re.compile(
+    r"project\s*\(\s*rp1-jtag\b[^)]*?\bVERSION\s+(\d+(?:\.\d+)+)"
+)
+
+
+def rp1jtag_base(src: Path) -> str:
+    """The release rp1-jtag's CMakeLists.txt declares, from a fetched tree."""
+    cmake = src / "CMakeLists.txt"
+    if not cmake.is_file():
+        raise FpgatoolsError(f"{cmake} not found: run `fpgatools fetch rp1jtag`")
+    m = _CMAKE_PROJECT_VERSION_RE.search(cmake.read_text())
+    if not m:
+        raise VersionError(f"{cmake} has no project(rp1-jtag VERSION x.y.z)")
+    return m.group(1)
+
+
+def _pin_date(name: str, pin: Pin) -> str:
+    if pin.date is None:
+        raise FpgatoolsError(
+            f"the {name} pin needs a date in upstreams.toml (fpgatools bump records it)"
+        )
+    return pin.date.replace("-", "")
+
+
+def library_version(name: str, pins: Pins, repo_version: str, src: Path | None = None) -> str:
+    """The Debian version of a packaged library.
+
+    librp1jtag0: `0.1.0+git20260918.d9d7d8d+fpgasonline.0.0.post43`. The base
+    is rp1-jtag's own declared release, read from `src` (the fetched tree),
+    so the version sorts above the 0.0.postN packages mithro/rp1-jtag used
+    to publish under the same name.
+
+    libpio0: `20260914+git.ebc4a56+fpgasonline.0.0.post43`. PIOLib has no
+    release number; Raspberry Pi version its package by date, and so do we.
+    """
+    if name not in LIBS:
+        raise FpgatoolsError(f"unknown library {name!r} (known: {', '.join(LIBS)})")
+    pin = pins.pin(name)
+    date = _pin_date(name, pin)
+    sha = pin.commit[:7]
+    if name == "rp1jtag":
+        if src is None:
+            raise FpgatoolsError("the rp1jtag version needs the fetched source tree")
+        return f"{rp1jtag_base(src)}+git{date}.{sha}+fpgasonline.{repo_version}"
+    return f"{date}+git.{sha}+fpgasonline.{repo_version}"
 
 
 # --- CLI ------------------------------------------------------------------------

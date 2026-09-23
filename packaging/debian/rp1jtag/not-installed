@@ -1,0 +1,3 @@
+# The static archive links PIOLib's objects in; the shared library is the
+# only form these packages ship.
+usr/lib/*/librp1jtag.a

@@ -1,26 +1,40 @@
-"""Render packaging/debian/<tool>/ into a patched source tree as debian/.
+"""Render packaging/debian/<name>/ into a source tree as debian/.
 
 The templates carry @PLACEHOLDER@ tokens for everything that differs between
 tools, tracks and builds, so one set of templates serves both tracks and the
 binary package name, version and Conflicts are derived rather than typed.
+
+The same goes for the two shared libraries the tool packages depend on
+(librp1jtag0, and libpio0 where Raspberry Pi's archive does not provide it):
+`fpgatools debianize rp1jtag|piolib --dest <copy of the fetched tree>`.
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from fpgatools import REPO, TOOLS, TRACKS
+from fpgatools import LIBS, REPO, TOOLS, TRACKS
 from fpgatools.cli import FpgatoolsError
 from fpgatools.gitutil import run_git
 from fpgatools.pins import Pins, load
-from fpgatools.version import package_version, repo_version, tool_version_string
+from fpgatools.version import (
+    library_version,
+    package_version,
+    repo_version,
+    tool_version_string,
+)
 
 TEMPLATES_ROOT = REPO / "packaging" / "debian"
 MAINTAINER = "Tim 'mithro' Ansell <me@mith.ro>"
 PACKAGE_STEM = {"openfpgaloader": "openfpgaloader-fpgasonline", "openocd": "openocd-fpgasonline"}
+# Source package names of the libraries. The binary packages keep the names
+# the rest of the world uses (librp1jtag0, libpio0), so these only need to be
+# distinct from other sources of the same binaries.
+LIB_SOURCE = {"rp1jtag": "rp1-jtag-fpgasonline", "piolib": "piolib-fpgasonline"}
 
 
 def package_name(tool: str, track: str) -> str:
@@ -79,13 +93,13 @@ def substitutions(tool: str, track: str, pins: Pins, repo_ver: str) -> Substitut
 _TOKEN_RE = re.compile(r"@[A-Z_]+@")
 
 
-def substitute(text: str, subs: Substitutions) -> str:
+def substitute(text: str, subs: Substitutions | dict[str, str]) -> str:
     """Replace every known @TOKEN@; any other @UPPER_CASE@ left behind is an error.
 
     A typo in a template (`@VERISON@`) would otherwise ship verbatim inside a
     control file.
     """
-    mapping = subs.as_dict()
+    mapping = subs.as_dict() if isinstance(subs, Substitutions) else subs
     for token, value in mapping.items():
         text = text.replace(token, value)
     leftover = sorted(set(_TOKEN_RE.findall(text)))
@@ -95,11 +109,20 @@ def substitute(text: str, subs: Substitutions) -> str:
 
 
 def changelog(subs: Substitutions, date_rfc2822: str) -> str:
+    return _changelog(
+        subs.package,
+        subs.version,
+        f"Rolling fpgas.online build ({subs.track} track) of {subs.upstream_ref}"
+        f" {subs.upstream_commit} plus the fpgas.online patch series.",
+        date_rfc2822,
+    )
+
+
+def _changelog(source: str, version: str, entry: str, date_rfc2822: str) -> str:
     return (
-        f"{subs.package} ({subs.version}) unstable; urgency=medium\n"
+        f"{source} ({version}) unstable; urgency=medium\n"
         "\n"
-        f"  * Rolling fpgas.online build ({subs.track} track) of {subs.upstream_ref}"
-        f" {subs.upstream_commit} plus the fpgas.online patch series.\n"
+        f"  * {entry}\n"
         "\n"
         f" -- {MAINTAINER}  {date_rfc2822}\n"
     )
@@ -108,6 +131,17 @@ def changelog(subs: Substitutions, date_rfc2822: str) -> str:
 def head_date_rfc2822(repo: Path = REPO) -> str:
     """The HEAD commit date of this repository, so a rebuild is byte-identical."""
     return run_git(["log", "-1", "--format=%cd", "--date=rfc2822"], cwd=repo).stdout.strip()
+
+
+def _write_templates(src: Path, debian: Path, mapping: Substitutions | dict[str, str]) -> None:
+    for path in sorted(p for p in src.rglob("*") if p.is_file()):
+        rel = path.relative_to(src)
+        out_name = rel.name[: -len(".in")] if rel.name.endswith(".in") else rel.name
+        out = debian / rel.parent / out_name
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(substitute(path.read_text(), mapping))
+        if out_name == "rules":
+            out.chmod(0o755)
 
 
 def render(
@@ -127,15 +161,55 @@ def render(
     subs = substitutions(tool, track, pins, repo_ver)
     debian = dest / "debian"
     debian.mkdir(parents=True, exist_ok=True)
-    for path in sorted(p for p in src.rglob("*") if p.is_file()):
-        rel = path.relative_to(src)
-        out_name = rel.name[: -len(".in")] if rel.name.endswith(".in") else rel.name
-        out = debian / rel.parent / out_name
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(substitute(path.read_text(), subs))
-        if out_name == "rules":
-            out.chmod(0o755)
+    _write_templates(src, debian, subs)
     (debian / "changelog").write_text(changelog(subs, date_rfc2822 or head_date_rfc2822()))
+    return debian
+
+
+def library_substitutions(name: str, pins: Pins, repo_ver: str, tree: Path) -> dict[str, str]:
+    pin = pins.pin(name)
+    return {
+        "@SOURCE@": LIB_SOURCE[name],
+        "@VERSION@": library_version(name, pins, repo_ver, tree),
+        "@UPSTREAM_URL@": pins.url(name),
+        "@UPSTREAM_REF@": pin.ref,
+        "@UPSTREAM_COMMIT@": pin.commit[:12],
+    }
+
+
+def render_library(
+    name: str,
+    pins: Pins,
+    repo_ver: str,
+    dest: Path,
+    *,
+    templates_root: Path = TEMPLATES_ROOT,
+    date_rfc2822: str | None = None,
+) -> Path:
+    """Write <dest>/debian/ for a library; returns the debian/ directory.
+
+    `dest` is a scratch copy of the fetched tree, never the fetch itself: an
+    existing debian/ (rp1-jtag ships its own, versioned 0.0.postN) is
+    replaced outright so no upstream file leaks into our packages.
+    """
+    if name not in LIBS:
+        raise FpgatoolsError(f"unknown library '{name}' (known: {', '.join(LIBS)})")
+    src = templates_root / name
+    if not src.is_dir():
+        raise FpgatoolsError(f"no debian templates for '{name}' under {templates_root}")
+    subs = library_substitutions(name, pins, repo_ver, dest)
+    debian = dest / "debian"
+    if debian.exists():
+        shutil.rmtree(debian)
+    debian.mkdir(parents=True)
+    _write_templates(src, debian, subs)
+    entry = (
+        f"Rolling fpgas.online build of {pins.url(name)} {subs['@UPSTREAM_REF@']}"
+        f" {subs['@UPSTREAM_COMMIT@']}."
+    )
+    (debian / "changelog").write_text(
+        _changelog(subs["@SOURCE@"], subs["@VERSION@"], entry, date_rfc2822 or head_date_rfc2822())
+    )
     return debian
 
 
@@ -143,13 +217,26 @@ def _cmd(args: argparse.Namespace) -> int:
     from fpgatools.patchset import src_dir
 
     pins = load()
-    dest = Path(args.dest) if args.dest else src_dir(args.tool, args.track)
+    if args.name in LIBS:
+        if args.track is not None:
+            raise FpgatoolsError(f"{args.name} has no tracks")
+        if not args.dest:
+            raise FpgatoolsError(
+                f"{args.name} needs --dest: a copy of build/src/{args.name}, never the fetch itself"
+            )
+        dest = Path(args.dest)
+        debian = render_library(args.name, pins, repo_version(), dest)
+        version = library_version(args.name, pins, repo_version(), dest)
+        print(f"{debian}: {LIB_SOURCE[args.name]} {version}")
+        return 0
+    if args.track is None:
+        raise FpgatoolsError(f"{args.name} needs a track ({', '.join(TRACKS)})")
+    tool, track = args.name, args.track
+    dest = Path(args.dest) if args.dest else src_dir(tool, track)
     if not dest.is_dir():
-        raise FpgatoolsError(
-            f"{dest} does not exist: run `fpgatools apply {args.tool} {args.track}`"
-        )
-    debian = render(args.tool, args.track, pins, repo_version(), dest)
-    subs = substitutions(args.tool, args.track, pins, repo_version())
+        raise FpgatoolsError(f"{dest} does not exist: run `fpgatools apply {tool} {track}`")
+    debian = render(tool, track, pins, repo_version(), dest)
+    subs = substitutions(tool, track, pins, repo_version())
     print(f"{debian}: {subs.package} {subs.version}")
     return 0
 
@@ -157,9 +244,13 @@ def _cmd(args: argparse.Namespace) -> int:
 def add_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "debianize",
-        help="render packaging/debian/<tool>/ into a patched tree as debian/",
+        help="render packaging/debian/<name>/ into a source tree as debian/",
     )
-    p.add_argument("tool", choices=TOOLS)
-    p.add_argument("track", choices=TRACKS)
-    p.add_argument("--dest", help="tree to write debian/ into (default build/src/<tool>-<track>)")
+    p.add_argument("name", choices=TOOLS + LIBS, help="a tool, or a library (rp1jtag, piolib)")
+    p.add_argument("track", nargs="?", choices=TRACKS, help="the tool's track (tools only)")
+    p.add_argument(
+        "--dest",
+        help="tree to write debian/ into (tools: default build/src/<tool>-<track>;"
+        " libraries: required, a copy of build/src/<name>)",
+    )
     p.set_defaults(func=_cmd)

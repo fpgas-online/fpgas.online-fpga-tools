@@ -1,0 +1,46 @@
+#!/usr/bin/make -f
+# debhelper rules for the fpgas.online libpio0 build: the piolib/ directory
+# of raspberrypi/utils, shared, as Raspberry Pi's own raspi-utils source
+# package builds it (-DBUILD_SHARED_LIBS=1). Rendered from
+# packaging/debian/piolib/ by `fpgatools debianize piolib`.
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/architecture.mk
+include /usr/share/dpkg/pkg-info.mk
+
+BUILDDIR = debian/build
+LIBDIR = debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)
+
+# What Raspberry Pi's libpio0 exports (the same 13 on bookworm 20251002 and
+# trixie 20260626). librp1jtag0 is built against theirs on those suites, so
+# this build must provide at least these for the one ABI to hold everywhere.
+RPI_ABI = library_piochips library_piochips_count pio_close pio_get_current \
+	pio_get_index pio_init pio_open pio_open_by_name pio_open_helper \
+	pio_panic pio_select rp1_pio_chip sleep_us
+
+%:
+	dh $@ --buildsystem=cmake --sourcedirectory=piolib --builddir=$(BUILDDIR)
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+
+# The library target only: piolib's examples link gpiolib from the sibling
+# pinctrl/ directory, which a piolib-only configure does not build.
+override_dh_auto_build:
+	dh_auto_build -- pio
+
+override_dh_auto_test:
+
+# Upstream installs the headers (component piolib) but gives the shared
+# library no install rule of its own, and a full install would want the
+# examples; so the headers come from cmake and the library is copied.
+override_dh_auto_install:
+	cmake --install $(BUILDDIR) --component piolib --prefix $(CURDIR)/debian/tmp/usr
+	install -d $(LIBDIR)
+	cp -a $(BUILDDIR)/libpio.so.0 $(BUILDDIR)/libpio.so $(LIBDIR)/
+	set -e; nm -D --defined-only $(LIBDIR)/libpio.so.0 | awk '{print $$3}' > debian/exports.txt; \
+	for sym in $(RPI_ABI); do \
+		grep -qx $$sym debian/exports.txt || { echo "ERROR: libpio.so.0 lacks $$sym" >&2; exit 1; }; \
+	done
+
+override_dh_makeshlibs:
+	dh_makeshlibs -V 'libpio0 (>= $(DEB_VERSION))'
