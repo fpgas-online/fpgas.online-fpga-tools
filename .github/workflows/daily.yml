@@ -1,0 +1,195 @@
+name: Daily upstream bump
+
+# Every day: resolve the upstream heads, build EVERYTHING against them, and
+# move the pins only if all of it passed.
+#
+#   1. candidate  `fpgatools bump` resolves the upstream heads (and the newest
+#                 release tag for the stable pins) and pushes the result to
+#                 the auto/pin-candidate branch. When nothing moved, the
+#                 candidate is simply main's own commit, so the rest of the
+#                 run is still a full daily rebuild of what the fleet has.
+#   2. verify     the whole deb matrix (24 jobs) and the whole static matrix
+#                 (12 jobs) against the candidate. Passing `ref` tells those
+#                 workflows they are building a candidate, which disables
+#                 their publish jobs.
+#   3. promote    only when every build passed and a pin actually moved:
+#                 fast-forward main to the candidate commit, then dispatch
+#                 debs.yml and static.yml on main, which build again and
+#                 publish. The second build is deliberate: main is only ever
+#                 published from a run of its own.
+#   4. report     on any failure, open (or update) one issue naming the
+#                 series or job that broke, so a red day is visible without
+#                 watching the Actions tab.
+#
+# Why dispatch in step 3 rather than let the push trigger the workflows: a
+# push made with GITHUB_TOKEN does not start workflow runs, by design, to
+# stop workflows triggering themselves. workflow_dispatch through the API is
+# the supported way back in.
+on:
+  schedule:
+    - cron: "23 5 * * *" # daily 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One at a time: two runs would race on the candidate branch and on main.
+concurrency:
+  group: daily-upstream-bump
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_BRANCH: auto/pin-candidate
+
+jobs:
+  candidate:
+    name: resolve the candidate pins
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # pushes the candidate branch (never main)
+    outputs:
+      ref: ${{ steps.candidate.outputs.ref }}
+      changed: ${{ steps.candidate.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # fpgatools version needs the series tags
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --quiet
+
+      # --fail-on-conflict: a series that no longer applies is a red day, not
+      # a quiet pin bump. The report is uploaded either way for the issue.
+      - name: Move the pins and re-apply every series
+        run: uv run fpgatools bump --report tmp/bump.md --fail-on-conflict
+
+      - name: Push the candidate
+        id: candidate
+        run: |
+          set -eu
+          if git diff --quiet upstreams.toml; then
+            echo "no pin moved; verifying $GITHUB_SHA as it stands"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "ref=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git --no-pager diff upstreams.toml
+          git config user.name "fpgas.online build"
+          git config user.email "builds@fpgas.online"
+          git add upstreams.toml
+          git commit -m "upstreams: daily pin bump
+
+          Moved by \`fpgatools bump\` (daily.yml) and published only because
+          every deb and static build passed against these pins first."
+          # Force: the candidate branch is scratch space owned by this
+          # workflow alone, rewritten every day. Nothing else may push to it.
+          git push --force origin "HEAD:refs/heads/$CANDIDATE_BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bump-report
+          path: tmp/bump.md
+          if-no-files-found: warn
+
+  verify-debs:
+    name: verify debs
+    needs: candidate
+    uses: ./.github/workflows/debs.yml
+    with:
+      ref: ${{ needs.candidate.outputs.ref }}
+
+  verify-static:
+    name: verify static
+    needs: candidate
+    uses: ./.github/workflows/static.yml
+    with:
+      ref: ${{ needs.candidate.outputs.ref }}
+
+  promote:
+    name: move the pins to main and publish
+    needs: [candidate, verify-debs, verify-static]
+    if: needs.candidate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # fast-forwards main
+      actions: write # dispatches the publishing runs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Fast-forward only: if main moved while the matrix was building, this
+      # push is refused and the run goes red rather than discarding a commit.
+      # Tomorrow's run bumps again from the new main.
+      - name: Fast-forward main to the verified candidate
+        env:
+          CANDIDATE: ${{ needs.candidate.outputs.ref }}
+        run: |
+          set -eu
+          git fetch origin "$CANDIDATE_BRANCH"
+          candidate=$CANDIDATE
+          git merge-base --is-ancestor origin/main "$candidate" \
+            || { echo "main moved since the candidate was built; not pushing" >&2; exit 1; }
+          git push origin "$candidate:refs/heads/main"
+
+      - name: Build main and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh workflow run debs.yml --ref main
+          gh workflow run static.yml --ref main
+
+  report:
+    name: report a red day
+    needs: [candidate, verify-debs, verify-static, promote]
+    if: always() && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bump-report
+          path: report/
+        continue-on-error: true # no report if the bump itself failed early
+
+      # One open issue at a time: a breakage that lasts a week is one thread,
+      # not seven. The title is the key, since labels may not exist.
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Bracket form: a hyphenated job id cannot be dereferenced with a dot.
+          RESULTS: "candidate=${{ needs.candidate.result }} debs=${{ needs['verify-debs'].result }} static=${{ needs['verify-static'].result }} promote=${{ needs.promote.result }}"
+        run: |
+          set -eu
+          title="Daily upstream bump is red"
+          {
+            echo "The daily bump run of $(date -u +%Y-%m-%d) did not complete."
+            echo
+            echo "- Run: $RUN_URL"
+            echo "- Jobs: $RESULTS"
+            echo
+            echo "The pins on main are untouched: nothing is published from a red run."
+            echo "Reproduce a series failure locally with \`uv run fpgatools bump --dry-run\`,"
+            echo "then rebase it (see CLAUDE.md, \"Working on the patch series\")."
+            if [ -f report/bump.md ]; then
+              echo
+              echo "<details><summary>Bump report</summary>"
+              echo
+              cat report/bump.md
+              echo
+              echo "</details>"
+            fi
+          } > body.md
+          existing=$(gh issue list --repo "$REPO" --state open --search "$title in:title" \
+            --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body-file body.md
+          else
+            gh issue create --repo "$REPO" --title "$title" --body-file body.md
+          fi
