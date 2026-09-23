@@ -115,6 +115,7 @@ def test_bump_against_local_upstreams(tmp_path: Path):
     git(lib, "add", "g")
     git(lib, "commit", "-q", "-m", "lib")
     libhead = git(lib, "rev-parse", "HEAD").strip()
+    libdate = git(lib, "log", "-1", "--format=%cd", "--date=short").strip()
 
     pins_file = tmp_path / "upstreams.toml"
     pins_file.write_text(f"""# test pins
@@ -144,11 +145,13 @@ date = "2020-01-01"
 url = "file://{lib}"
 ref = "main"
 commit = "{'0' * 40}"
+date = "2020-01-01"
 
 [piolib]
 url = "file://{lib}"
 ref = "main"
 commit = "{libhead}"
+date = "{libdate}"
 subdir = "piolib"
 """)
     report = bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
@@ -160,6 +163,7 @@ subdir = "piolib"
     v110 = git(up, "rev-parse", "v1.1.0^{commit}")
     assert data["openfpgaloader"]["stable"] == {"ref": "v1.1.0", "commit": v110}
     assert data["rp1jtag"]["commit"] == libhead
+    assert data["rp1jtag"]["date"] == libdate  # feeds the librp1jtag0 version
     assert data["piolib"]["commit"] == libhead  # unchanged, still correct
     # a second run is a no-op
     report2 = bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)

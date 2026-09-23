@@ -163,7 +163,7 @@ def new_pins(pins: Pins, root: Path = META_ROOT) -> list[PinUpdate]:
             old = pins.pin(name)
             head = branch_head(meta, old.ref)
             updates.append(PinUpdate(name, None, old, Pin(
-                ref=old.ref, commit=head, subdir=old.subdir)))
+                ref=old.ref, commit=head, date=commit_date(meta, head), subdir=old.subdir)))
     return updates
 
 

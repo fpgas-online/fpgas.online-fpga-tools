@@ -1,13 +1,15 @@
 # Every external input of the build, pinned by commit.
 #
-# `fpgatools bump` rewrites the [*.master] entries (and the stable ref when a
-# newer upstream release tag appears); humans review the resulting pull
-# request. Builds never look at a moving branch name: fpgatools fetches the
-# commit hash directly, so a build is reproducible from this file alone.
+# `fpgatools bump` (run daily by daily.yml) rewrites the [*.master] entries,
+# the stable ref when a newer upstream release tag appears, and the
+# [rp1jtag]/[piolib] pins. Builds never look at a moving branch name:
+# fpgatools fetches the commit hash directly, so a build is reproducible from
+# this file alone.
 #
-# describe/date on the master entries feed the +git<date>.<sha7> part of the
-# package version (see fpgatools/version.py); recording them here means the
-# build does not need upstream history, only the one commit.
+# describe/date on the master entries, and date on [rp1jtag]/[piolib], feed
+# the +git<date>.<sha7> part of the package versions (see fpgatools/version.py);
+# recording them here means the build does not need upstream history, only
+# the one commit.
 
 [openfpgaloader]
 url = "https://github.com/trabucayre/openFPGALoader.git"
@@ -36,16 +38,24 @@ describe = "v0.12.0-1701-gb04ccfef"
 date = "2026-09-20"
 
 # librp1jtag: the RP1 PIO JTAG library both tools' rp1pio drivers call.
-# Built from source and linked statically into every binary.
+# Packaged here as the shared librp1jtag0 / librp1jtag-dev the Debian tool
+# packages depend on; linked statically into the static release binaries.
+# `date` feeds the +git<date>.<sha7> part of the librp1jtag0 version.
 [rp1jtag]
 url = "https://github.com/mithro/rp1-jtag.git"
 ref = "main"
 commit = "d9d7d8d186f103bb16a3eafb9c7296d5e2a33c47"
+date = "2026-09-18"
 
-# PIOLib from raspberrypi/utils: librp1jtag's /dev/pio0 backend. Debian does
-# not package it. Only the piolib/ subdirectory is built.
+# PIOLib from raspberrypi/utils: librp1jtag's /dev/pio0 backend. Debian
+# proper does not package it; Raspberry Pi's archive does (libpio0 and
+# libpio-dev, source raspi-utils, on bookworm and trixie), and the Debian
+# packages use that. This pin is built into the static release binaries, and
+# into our own libpio0 for the one suite Raspberry Pi's archive lacks (sid).
+# Only the piolib/ subdirectory is built.
 [piolib]
 url = "https://github.com/raspberrypi/utils.git"
 ref = "master"
 commit = "ebc4a56bac3a896d5c14e56fe27dcd6cb36dd373"
+date = "2026-09-14"
 subdir = "piolib"
