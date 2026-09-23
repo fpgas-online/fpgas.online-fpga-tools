@@ -44,8 +44,13 @@ static_apk_deps() {
 # libgpiod 2.x needs the v2 GPIO chardev ABI (Linux 5.10+); the 32-bit
 # builds target older Raspberry Pi OS kernels, so they get the 1.x series.
 static_build_libgpiod() {
-	case $(uname -m) in
-	aarch64 | x86_64) ver=2.2.3 ;;
+	# static_arch, not `uname -m`: in an arm32v7/arm32v6 container on an
+	# arm64 host the kernel still says aarch64, which gave the 32-bit builds
+	# libgpiod 2.x and broke them on the old kernels they exist to serve
+	# (reported on a Pi 3B, Raspbian stretch, 4.14: the line request fails
+	# and libgpiod aborts on an assertion).
+	case $(static_arch) in
+	arm64 | amd64) ver=2.2.3 ;;
 	*) ver=1.6.5 ;;
 	esac
 	url="https://www.kernel.org/pub/software/libs/libgpiod/libgpiod-$ver.tar.gz"
