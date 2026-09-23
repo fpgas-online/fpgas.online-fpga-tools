@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Mon, 21 Sep 2026 19:36:21 +0930
-Subject: [PATCH 14/24] spiFlash: 0x012018 is S25FL128S or S25FL127S
+Subject: [PATCH 14/32] spiFlash: 0x012018 is S25FL128S or S25FL127S
 
 Both parts answer 0x012018. An Arty A7 read on real hardware returns
 SFDP 1.6 for it, which the S25FL128S (datasheet rev 06) does not have

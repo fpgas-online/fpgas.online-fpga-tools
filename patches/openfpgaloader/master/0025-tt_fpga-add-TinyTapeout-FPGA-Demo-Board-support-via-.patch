@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Mon, 16 Mar 2026 17:46:18 +1030
-Subject: [PATCH 17/24] tt_fpga: add TinyTapeout FPGA Demo Board support via
+Subject: [PATCH 25/32] tt_fpga: add TinyTapeout FPGA Demo Board support via
  MicroPython raw REPL
 
 Add native openFPGALoader support for the TinyTapeout FPGA Demo Board

@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Tue, 22 Sep 2026 20:13:04 +0930
+Subject: [PATCH 21/32] doc: flash-info sfdp null means no SFDP signature
+
+RSFDP is always sent; null only when the answer has no SFDP signature,
+and a failed SFDP read is an error with no file written.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC
+---
+ doc/guide/advanced.rst | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/doc/guide/advanced.rst b/doc/guide/advanced.rst
+index 96166e9..07c2b32 100644
+--- a/doc/guide/advanced.rst
++++ b/doc/guide/advanced.rst
+@@ -128,9 +128,11 @@ file and a zero exit status mean the content was read:
+        "sfdp": null}]}
+ 
+ ``flashes`` has one entry per flash (two with ``--target-flash both``).
+-``sfdp`` is ``null`` without SFDP, otherwise it holds the tables, ``bfpt``
+-(density, address mode, DTR, page size, read modes with opcode and
+-mode/dummy clocks, erase types, quad enable) and ``read_4byte``.
++``sfdp`` holds the tables, ``bfpt`` (density, address mode, DTR, page size,
++read modes with opcode and mode/dummy clocks, erase types, quad enable) and
++``read_4byte``. RSFDP (``0x5A``) is always sent, and ``sfdp`` is ``null``
++only when its answer has no ``SFDP`` signature, so the part does not
++implement it. A failed SFDP read is an error: no file is written.
+ 
+ ``unique_id.state`` is one of:
+ 

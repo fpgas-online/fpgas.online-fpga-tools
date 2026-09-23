@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Mon, 21 Sep 2026 16:09:11 +0930
-Subject: [PATCH 04/24] doc: document --flash-info
+Subject: [PATCH 04/32] doc: document --flash-info
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2L6L5SJYvbBUUt4DinjGC

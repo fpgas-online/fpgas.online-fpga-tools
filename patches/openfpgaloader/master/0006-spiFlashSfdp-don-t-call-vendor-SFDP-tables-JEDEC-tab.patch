@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Mon, 21 Sep 2026 17:52:25 +0930
-Subject: [PATCH 06/24] spiFlashSfdp: don't call vendor SFDP tables "JEDEC
+Subject: [PATCH 06/32] spiFlashSfdp: don't call vendor SFDP tables "JEDEC
  table"
 
 In SFDP parameter headers the ID LSB of a vendor table is the

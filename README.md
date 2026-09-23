@@ -25,6 +25,13 @@ The exact pins are in [`upstreams.toml`](upstreams.toml).
 | **Device DNA / TraceID**: die-level identifiers | `--read-dna` (upstream) | `fpga/xilinx-dna.cfg` (upstream), `fpga/lattice-ecp5-traceid.cfg` (patch) | DNA is upstream in both; ECP5 TraceID is a patch |
 | Version strings that name this build | `--Version` prints `v<version>` | `openocd -v` prints the fpgas.online suffix | packaging glue |
 
+The spiOverJtag bridge bitstreams are upstream's, so the two openFPGALoader
+tracks ship different sets. Only the `master` track has `efinix_ti375n484`,
+`xcau10p-ffvb676`, `xcku3p-ffvb676`, `xcvu7p-flvb2104` and
+`xcvu9p-flgb2104`; only the `stable` track has `xc7a100tfgg676`. A flash
+access on a board whose part is missing from one track needs the package or
+static tarball of the other.
+
 Known limitation of the `stable` OpenOCD track: the 0.12.0 release only
 supports libgpiod 1.x, so on trixie and sid (libgpiod 2.x) and in the arm64
 static build the `linuxgpiod` adapter is left out. `rp1_pio_jtag` (Pi 5) and
