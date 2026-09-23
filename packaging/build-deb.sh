@@ -60,15 +60,20 @@ fpgatools debianize "$tool" "$track"
 # Build-Depends from the rendered control file, nothing duplicated here.
 cd "$src"
 apt-get build-dep -y -q ./
+# The source and binary package share one name (debian/changelog has it).
+# dpkg-buildpackage writes into build/src/, which every tool/track shares,
+# so only this package's files are cleared, copied and installed.
+pkg=$(dpkg-parsechangelog -S Source)
+rm -f ../"${pkg}"_*.deb ../"${pkg}"-dbgsym_*.deb
 FPGATOOLS_REPO=$REPO dpkg-buildpackage -us -uc -b
 
 mkdir -p "$OUT"
-cp ../*.deb "$OUT/"
+cp ../"${pkg}"_*.deb ../"${pkg}"-dbgsym_*.deb "$OUT/"
 ls -l "$OUT"
 
 # Install what was just built and run it: the package must be usable with
 # only Debian's libraries, librp1jtag0 and libpio0 alongside.
-apt-get install -y -q ../*.deb
+apt-get install -y -q ../"${pkg}"_*.deb
 case $tool in
 openfpgaloader)
 	bin=$(command -v openFPGALoader)
@@ -87,8 +92,6 @@ ldd "$bin" | tee "$OUT/ldd-$tool-$track.txt"
 grep -q 'librp1jtag\.so\.0 => /' "$OUT/ldd-$tool-$track.txt" \
 	|| { echo "build-deb: $bin does not load the shared librp1jtag.so.0" >&2; exit 1; }
 rm "$OUT/ldd-$tool-$track.txt"
-# The source and binary package share one name (debian/changelog has it).
-pkg=$(dpkg-parsechangelog -S Source)
 dpkg-query -W -f '${Depends}\n' "$pkg" | grep -q 'librp1jtag0 (>= ' \
 	|| { echo "build-deb: $pkg does not depend on librp1jtag0" >&2; exit 1; }
 echo "==> $tool/$track $version OK"
