@@ -178,13 +178,15 @@ url = "https://github.com/openocd-org/openocd.git"
 [openocd.stable]  ref = "v0.12.0"  commit = "..."
 [openocd.master]  ref = "master"   commit = "b04ccfe..."  describe = "v0.12.0-NNNN-gb04ccfe"  date = "2026-09-20"
 
-[rp1jtag]        # librp1jtag, linked statically into both tools
+[rp1jtag]        # librp1jtag: packaged shared (librp1jtag0), static in the release binaries
 url = "https://github.com/mithro/rp1-jtag.git"
 commit = "d9d7d8d..."                 # origin/main
+date = "2026-09-18"                    # committer date, for the librp1jtag0 version
 
 [piolib]         # raspberrypi/utils piolib, the /dev/pio0 backend of librp1jtag
 url = "https://github.com/raspberrypi/utils.git"
 commit = "..."
+date = "2026-09-14"
 ```
 
 `fpgatools fetch <name> [<track>]` does `git init; git fetch --depth 1 <url>
@@ -192,10 +194,47 @@ commit = "..."
 serves any reachable commit by SHA). No history is needed at build time
 because `describe` and `date` are recorded in the pin file by the bump tool.
 
-**[decision] librp1jtag and piolib are built from pinned source and linked
-statically** into openFPGALoader and OpenOCD in every build form. The debs
-then depend only on Debian libraries and the fleet needs one apt source,
-not two. rp1-jtag's own `librp1jtag0` packages stay unaffected.
+~~**[decision] librp1jtag and piolib are built from pinned source and linked
+statically** into openFPGALoader and OpenOCD in every build form.~~
+Superseded 2026-09-23 by the decision below; the static release binaries
+still link both statically.
+
+**[decision 2026-09-23, Tim] librp1jtag and PIOLib are shared libraries in
+their own Debian packages, which the tool packages depend on.**
+
+- `librp1jtag0` / `librp1jtag-dev` (source `rp1-jtag-fpgasonline`) are built
+  here from the `[rp1jtag]` pin, for every suite and architecture, and
+  published in the same apt repository. They keep the binary package names
+  mithro/rp1-jtag published (frozen at `0.0.post87`; its deb.yml is gone), at
+  `<project VERSION>+git<date>.<sha7>+fpgasonline.<R>` (`0.1.0+git20260918.d9d7d8d+fpgasonline.R`),
+  which sorts above them, so hosts upgrade in place. The shared library
+  links `libpio.so.0` and exports only `rp1_jtag_*` (a linker version
+  script): rp1-jtag's own build carried a private PIOLib and exported its
+  `pio_*` functions (9 of which libpio0 also defines) and its own
+  `pio_backend_*`/`pio_shift_run` internals. `--no-undefined` makes a PIOLib
+  function libpio0 lacks a build failure. shlibs: `librp1jtag0 (>= <same
+  revision>)`, since the pre-1.0 API has no symbols file.
+- `libpio0` / `libpio-dev` come from **Raspberry Pi's archive** where it has
+  them: bookworm (`20251002-1~bookworm`) and trixie (`20260626-1`), arm64 and
+  armhf, source `raspi-utils`, 13 exported symbols, identical on both
+  suites. Every Raspberry Pi OS install, the fleet NFS root included, has
+  that archive. librp1jtag0 is built against it on those suites (the build
+  container adds it, trusted through `packaging/keys/`, pinned to priority
+  100 so nothing else is taken from it). Where Raspberry Pi has no libpio0
+  (sid; amd64 in the CI compile check) this repository builds its own from
+  the `[piolib]` pin (source `piolib-fpgasonline`, shared as raspi-utils
+  builds it, versioned date-first `<YYYYMMDD>+git.<sha7>+fpgasonline.<R>` like
+  theirs) and publishes it for that suite only. The build asserts it exports
+  all 13 of Raspberry Pi's symbols.
+- Considered: always building our own libpio0 (two archives would then
+  offer one package name at unrelated versions, and whichever sorts higher
+  wins on a Pi); a libpio0 of ours on every suite, versioned to sort below
+  Raspberry Pi's so it is only a fallback (needs a fabricated date between
+  20250514 and 20251002 to satisfy their shlibs yet lose to their bookworm
+  package). Tim chose Raspberry Pi's where it exists and ours elsewhere.
+- Consequence: on bookworm and trixie the debs need Raspberry Pi's archive
+  configured. Plain Debian without it has no libpio0; the static binaries
+  are unaffected.
 
 ## 7. Versioning
 
@@ -216,6 +255,13 @@ source format `3.0 (native)` applies. Both tracks strictly out-version the
 Debian archive (`1.1.1+... > 0.13.1-1`; `0.12.0+git... > 0.12.0-4`) so a
 plain `apt install` from a host with both sources prefers ours.
 
+The shared libraries (section 6) follow the same pattern from their single
+pin: `librp1jtag0` `<rp1-jtag project VERSION>+git<YYYYMMDD>.<sha7>+fpgasonline.<R>`
+(`0.1.0+git20260918.d9d7d8d+fpgasonline.0.0.post43`, above rp1-jtag's own
+`0.0.postN`), our sid `libpio0` `<YYYYMMDD>+git.<sha7>+fpgasonline.<R>`
+(`20260914+git.ebc4a56+fpgasonline.0.0.post43`), date-first as Raspberry
+Pi's own `libpio0` versions are.
+
 The binaries report the same string: openFPGALoader prints
 `openFPGALoader v1.1.1+fpgasonline.0.0.post12` (via patch 1),
 OpenOCD prints `Open On-Chip Debugger 0.12.0+dev-01234-gb04ccfe+fpgasonline.0.0.post12`
@@ -234,14 +280,22 @@ and let the fleet choose a track explicitly.
 
 ### Debs (`debs.yml`)
 
-Matrix: tool {openfpgaloader, openocd} × track {stable, master} × suite
+First a `libs` job per suite × arch (6 jobs, `packaging/build-libs.sh`):
+libpio-dev from Raspberry Pi's archive, or our libpio0/libpio-dev built
+from the pin; then librp1jtag0/librp1jtag-dev (`fpgatools debianize rp1jtag
+--dest <copy of the fetch>`, rp1-jtag's ctest suite run, exports and NEEDED
+asserted). Artifact `debs-<suite>-<arch>-libs`.
+
+Then the tool matrix: tool {openfpgaloader, openocd} × track {stable, master} × suite
 {bookworm, trixie, sid} × arch {arm64, armhf} = 24 jobs on `ubuntu-24.04-arm`,
 each `docker run --platform` in `debian:<suite>` (armhf via the runner's
 binfmt, as rp1-jtag does). Steps inside the container:
 
-1. `fpgatools fetch` piolib, rp1jtag, the tool; `fpgatools apply <tool> <track>`
-   (`git am --3way`; conflict = job failure).
-2. Build piolib (library target only) and librp1jtag (static) into `/usr/local`.
+1. Install that suite/arch's library packages (`LIBS_DIR`), with Raspberry
+   Pi's archive added where libpio0 comes from it; `fpgatools apply <tool>
+   <track>` (`git am --3way`; conflict = job failure).
+2. (Formerly: build piolib and librp1jtag statically into `/usr/local`.)
+   `Build-Depends: librp1jtag-dev`; the tools link it through rp1jtag.pc.
 3. `fpgatools debianize <tool> <track>` renders `packaging/debian/<tool>/` into
    the source tree with package name, version and changelog.
 4. `dpkg-buildpackage -us -uc -b` with debhelper 13: `dh` drives cmake or
@@ -249,7 +303,9 @@ binfmt, as rp1-jtag does). Steps inside the container:
    OpenOCD, `/usr/share/openocd/scripts`.
 5. Assert the result: `openFPGALoader --list-cables` names `rp1pio`,
    `libgpiod`, `tt_micropython`; `openocd -c 'adapter driver rp1_pio_jtag' -c shutdown`
-   does not say "invalid"; `--Version` / `-v` contains `fpgasonline`.
+   does not say "invalid"; `--Version` / `-v` contains `fpgasonline`; the
+   installed binary loads `librp1jtag.so.0` (ldd) and the package depends on
+   `librp1jtag0`.
 
 Configure flags: openFPGALoader `ENABLE_CABLE_ALL=ON ENABLE_VENDORS_ALL=ON
 ENABLE_LIBGPIOD=ON ENABLE_UDEV=ON ENABLE_RP1_PIO=ON ENABLE_TT_MICROPYTHON=ON`;
@@ -299,7 +355,8 @@ overwritten except `latest.json`.
 four series (fails on conflict), `fpgatools compare` for both tools, and a
 native amd64 **deb build** of each tool/track in `debian:trixie` through the
 same `packaging/build-deb.sh` the arm matrix uses (RP1 PIO on: librp1jtag
-compiles anywhere, it just has nothing to drive on amd64). PRs also run
+compiles anywhere, it just has nothing to drive on amd64; with no
+`LIBS_DIR` the script builds librp1jtag0, and libpio0, first). PRs also run
 `debs.yml` and `static.yml` build jobs (publish jobs are main-only).
 `packaging/compile-check.sh` is the developer-side equivalent (configure,
 build, assert cables/adapters/version) without packaging.
@@ -341,6 +398,12 @@ The day then goes:
 
 Cost: a bump day builds the matrix twice (verify, then main). That was the
 accepted trade for never publishing an unverified pin.
+
+The same workflow also runs on `repository_dispatch` of event type
+`rp1jtag-updated` (added 2026-09-23 with the shared librp1jtag0), so
+mithro/rp1-jtag can have a library change built, verified and published the
+same day. The sender needs a token with access to this repository; without
+one the daily run still picks the change up.
 
 ## 9. Tooling (`fpgatools`)
 
@@ -402,6 +465,8 @@ are unit-tested; git-touching code is exercised by CI's apply step.
 4. Follow-up in `mithro/rp1-jtag`: drop the openFPGALoader/OpenOCD deb and
    static jobs, keep `librp1jtag` (its `drivers/` become the upstream of
    patches here; or move them here and leave rp1-jtag as the library only).
+   Done there (its deb.yml was removed); `librp1jtag0` is now published from
+   here (section 6).
 5. Consider upstreaming order: flash-info and the NeTV2 boards are closest to
    mergeable upstream; the rp1pio drivers need librp1jtag packaged somewhere
    upstream can depend on.

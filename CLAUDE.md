@@ -12,7 +12,10 @@ changing structure; `README.md` is the user-facing description.
   and `master` (upstream default branch).
 - `fpgatools/` — stdlib-only Python CLI: `fetch`, `apply`, `export`, `compare`,
   `version`, `debianize`, `bump`.
-- `packaging/` — debian templates, Alpine static scripts, librp1jtag build helper.
+- `packaging/` — debian templates (the two tools, and the shared libraries
+  `rp1jtag` → librp1jtag0 and `piolib` → libpio0), Alpine static scripts,
+  `build-libs.sh` / `build-deb.sh`, `libpio.sh` (libpio0 comes from Raspberry
+  Pi's archive on bookworm/trixie, from here elsewhere).
 - `.github/workflows/` — `ci.yml`, `debs.yml`, `static.yml`, `daily.yml` (the daily bump, full rebuild and publish).
 - `build/` (gitignored) — upstream working trees under `build/src/<name>[-<track>]`.
 
@@ -48,8 +51,10 @@ whoever writes them.
   Feature work belongs in the upstream projects or their forks.
 - Versions are derived, never typed: `<upstream>+fpgasonline.<repo version>`
   where the repo version comes from `git describe` against `vX.Y` series tags.
-- Debs are built with `dh` from `packaging/debian/<tool>/`, never with
+- Debs are built with `dh` from `packaging/debian/<name>/`, never with
   hand-rolled `dpkg-deb` control files.
+- The Debian tools link librp1jtag shared (librp1jtag0); the static release
+  binaries link it and PIOLib statically. Keep both working.
 - Publishing (Pages apt, Releases) runs only from `main`; pull requests build
   everything but publish nothing.
 - Small commits, each individually meaningful; PRs are merged with merge commits.
