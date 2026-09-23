@@ -164,3 +164,18 @@ subdir = "piolib"
     # a second run is a no-op
     report2 = bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
     assert not report2.changed
+
+
+def test_report_conflicts_lists_only_failed_series():
+    r = bump.BumpReport(updates=[])
+    r.applied[("openocd", "master")] = "OK"
+    r.applied[("openocd", "stable")] = "CONFLICT: 0002-foo.patch"
+    r.applied[("openfpgaloader", "master")] = "CONFLICT: 0031-bar.patch"
+    assert r.conflicts() == ["openfpgaloader/master: CONFLICT: 0031-bar.patch",
+                             "openocd/stable: CONFLICT: 0002-foo.patch"]
+
+
+def test_report_conflicts_empty_when_every_series_applies():
+    r = bump.BumpReport(updates=[])
+    r.applied[("openocd", "master")] = "OK"
+    assert r.conflicts() == []
