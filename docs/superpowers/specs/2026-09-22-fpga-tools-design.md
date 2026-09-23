@@ -206,7 +206,7 @@ their own Debian packages, which the tool packages depend on.**
   here from the `[rp1jtag]` pin, for every suite and architecture, and
   published in the same apt repository. They keep the binary package names
   mithro/rp1-jtag published (frozen at `0.0.post87`; its deb.yml is gone), at
-  `<project VERSION>+git<date>.<sha7>+fpgasonline.<R>` (`0.1.0+git20260918.d9d7d8d+fpgasonline.R`),
+  `<project VERSION>+git<date>+fpgasonline.<R>.g<sha7>` (`0.1.0+git20260918+fpgasonline.R.gd9d7d8d`),
   which sorts above them, so hosts upgrade in place. The shared library
   links `libpio.so.0` and exports only `rp1_jtag_*` (a linker version
   script): rp1-jtag's own build carried a private PIOLib and exported its
@@ -223,7 +223,7 @@ their own Debian packages, which the tool packages depend on.**
   100 so nothing else is taken from it). Where Raspberry Pi has no libpio0
   (sid; amd64 in the CI compile check) this repository builds its own from
   the `[piolib]` pin (source `piolib-fpgasonline`, shared as raspi-utils
-  builds it, versioned date-first `<YYYYMMDD>+git.<sha7>+fpgasonline.<R>` like
+  builds it, versioned date-first `<YYYYMMDD>+fpgasonline.<R>.g<sha7>` like
   theirs) and publishes it for that suite only. The build asserts it exports
   all 13 of Raspberry Pi's symbols.
 - Considered: always building our own libpio0 (two archives would then
@@ -256,11 +256,16 @@ Debian archive (`1.1.1+... > 0.13.1-1`; `0.12.0+git... > 0.12.0-4`) so a
 plain `apt install` from a host with both sources prefers ours.
 
 The shared libraries (section 6) follow the same pattern from their single
-pin: `librp1jtag0` `<rp1-jtag project VERSION>+git<YYYYMMDD>.<sha7>+fpgasonline.<R>`
-(`0.1.0+git20260918.d9d7d8d+fpgasonline.0.0.post43`, above rp1-jtag's own
-`0.0.postN`), our sid `libpio0` `<YYYYMMDD>+git.<sha7>+fpgasonline.<R>`
-(`20260914+git.ebc4a56+fpgasonline.0.0.post43`), date-first as Raspberry
-Pi's own `libpio0` versions are.
+pin: `librp1jtag0` `<rp1-jtag project VERSION>+git<YYYYMMDD>+fpgasonline.<R>.g<sha7>`
+(`0.1.0+git20260918+fpgasonline.0.0.post43.gd9d7d8d`, above rp1-jtag's own
+`0.0.postN`), our sid `libpio0` `<YYYYMMDD>+fpgasonline.<R>.g<sha7>`
+(`20260914+fpgasonline.0.0.post43.gebc4a56`), date-first as Raspberry
+Pi's own `libpio0` versions are. R precedes the sha so that two pins with
+the same commit date (two rp1-jtag pushes in a day, each dispatching a
+bump) order by R rather than by hash. The master-track tool versions above
+keep the older `+git<date>.<sha7>+fpgasonline.<R>` shape and so share that
+same-day weakness; changing them would change a published version scheme
+and is left as a separate decision.
 
 The binaries report the same string: openFPGALoader prints
 `openFPGALoader v1.1.1+fpgasonline.0.0.post12` (via patch 1),

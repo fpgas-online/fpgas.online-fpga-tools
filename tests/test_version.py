@@ -173,7 +173,7 @@ def test_library_version_rp1jtag(tmp_path, real_pins):
     pin = real_pins.pin("rp1jtag")
     date = pin.date.replace("-", "")
     v = version.library_version("rp1jtag", real_pins, "0.0.post43", _rp1jtag_tree(tmp_path))
-    assert v == f"0.1.0+git{date}.{pin.commit[:7]}+fpgasonline.0.0.post43"
+    assert v == f"0.1.0+git{date}+fpgasonline.0.0.post43.g{pin.commit[:7]}"
 
 
 def test_library_version_rp1jtag_sorts_above_rp1_jtags_own_packages(tmp_path, real_pins):
@@ -187,11 +187,33 @@ def test_library_version_rp1jtag_sorts_above_rp1_jtags_own_packages(tmp_path, re
     subprocess.run(["dpkg", "--compare-versions", v, "gt", "0.0.post87"], check=True)
 
 
+@pytest.mark.parametrize("name", ["rp1jtag", "piolib"])
+def test_library_version_orders_by_repo_version_not_sha(tmp_path, real_pins, name):
+    """Two bumps on one upstream date (daily.yml also runs per rp1-jtag push):
+    the later one, with a higher R, must sort higher whatever the shas are."""
+    import dataclasses
+    import shutil
+    import subprocess
+
+    if shutil.which("dpkg") is None:
+        pytest.skip("needs dpkg --compare-versions")
+    tree = _rp1jtag_tree(tmp_path)
+
+    def at(commit, r):
+        pin = dataclasses.replace(real_pins.pin(name), commit=commit)
+        p = pins.Pins.from_dict({name: {"url": "u", **dataclasses.asdict(pin)}})
+        return version.library_version(name, p, r, tree)
+
+    older = at("f" * 40, "0.0.post48")
+    newer = at("0" * 40, "0.0.post49")
+    subprocess.run(["dpkg", "--compare-versions", newer, "gt", older], check=True)
+
+
 def test_library_version_piolib(real_pins):
     pin = real_pins.pin("piolib")
     date = pin.date.replace("-", "")
     v = version.library_version("piolib", real_pins, "1.2")
-    assert v == f"{date}+git.{pin.commit[:7]}+fpgasonline.1.2"
+    assert v == f"{date}+fpgasonline.1.2.g{pin.commit[:7]}"
 
 
 def test_library_version_errors(tmp_path, real_pins):

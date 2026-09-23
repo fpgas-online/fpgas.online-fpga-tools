@@ -115,7 +115,8 @@ def test_render_library(tmp_path: Path, pins, name, source, packages, version_pr
     assert (debian / "source" / "format").read_text() == "3.0 (native)\n"
     first = (debian / "changelog").read_text().splitlines()[0]
     assert first.startswith(f"{source} ({version_prefix}")
-    assert first.endswith("+fpgasonline.0.0.post43) unstable; urgency=medium")
+    assert "+fpgasonline.0.0.post43.g" in first
+    assert first.endswith(") unstable; urgency=medium")
 
 
 def test_render_rp1jtag_exports_only_its_api(tmp_path: Path, pins):

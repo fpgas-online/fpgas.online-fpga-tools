@@ -87,8 +87,8 @@ Both depend on two shared libraries:
 
 | Package | Library | Where it comes from |
 |---|---|---|
-| `librp1jtag0` | RP1 PIO JTAG ([mithro/rp1-jtag](https://github.com/mithro/rp1-jtag)); exports the `rp1_jtag_*` API only | this repository, every suite. Its version (`0.1.0+git<date>.<sha7>+fpgasonline.<patchset>`) sorts above the `0.0.postN` packages mithro/rp1-jtag published under the same name, so it upgrades them in place |
-| `libpio0` | PIOLib, the `/dev/pio0` user-space API ([raspberrypi/utils](https://github.com/raspberrypi/utils) `piolib/`) | **bookworm, trixie: Raspberry Pi's archive** (`archive.raspberrypi.com`, which every Raspberry Pi OS install has configured). sid: this repository, versioned `<YYYYMMDD>+git.<sha7>+fpgasonline.<patchset>` |
+| `librp1jtag0` | RP1 PIO JTAG ([mithro/rp1-jtag](https://github.com/mithro/rp1-jtag)); exports the `rp1_jtag_*` API only | this repository, every suite. Its version (`0.1.0+git<date>+fpgasonline.<patchset>.g<sha7>`) sorts above the `0.0.postN` packages mithro/rp1-jtag published under the same name, so it upgrades them in place |
+| `libpio0` | PIOLib, the `/dev/pio0` user-space API ([raspberrypi/utils](https://github.com/raspberrypi/utils) `piolib/`) | **bookworm, trixie: Raspberry Pi's archive** (`archive.raspberrypi.com`, which every Raspberry Pi OS install has configured). sid: this repository, versioned `<YYYYMMDD>+fpgasonline.<patchset>.g<sha7>` |
 
 So on bookworm or trixie the packages install on Raspberry Pi OS, or on any
 Debian with Raspberry Pi's archive added; plain Debian without it has no

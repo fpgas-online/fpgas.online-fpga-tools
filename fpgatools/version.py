@@ -10,9 +10,11 @@ Nothing here is typed by hand (see CLAUDE.md "Versions are derived"):
   master, where the base, date and sha come from `upstreams.toml`.
 * The string each patched binary reports is derived from the same parts.
 * The shared libraries are versioned the same way from their single pin:
-  librp1jtag0 `<rp1-jtag project VERSION>+git<YYYYMMDD>.<sha7>+fpgasonline.<R>`
-  and our libpio0 (sid only) `<YYYYMMDD>+git.<sha7>+fpgasonline.<R>`, the
-  date-first shape Raspberry Pi's own libpio0 versions use.
+  librp1jtag0 `<rp1-jtag project VERSION>+git<YYYYMMDD>+fpgasonline.<R>.g<sha7>`
+  and our libpio0 (sid only) `<YYYYMMDD>+fpgasonline.<R>.g<sha7>`, the
+  date-first shape Raspberry Pi's own libpio0 versions use. R comes before
+  the sha: two pins with the same commit date must order by R, which rises
+  with every commit here, not by an arbitrary hash.
 """
 
 from __future__ import annotations
@@ -158,12 +160,12 @@ def _pin_date(name: str, pin: Pin) -> str:
 def library_version(name: str, pins: Pins, repo_version: str, src: Path | None = None) -> str:
     """The Debian version of a packaged library.
 
-    librp1jtag0: `0.1.0+git20260918.d9d7d8d+fpgasonline.0.0.post43`. The base
+    librp1jtag0: `0.1.0+git20260918+fpgasonline.0.0.post43.gd9d7d8d`. The base
     is rp1-jtag's own declared release, read from `src` (the fetched tree),
     so the version sorts above the 0.0.postN packages mithro/rp1-jtag used
     to publish under the same name.
 
-    libpio0: `20260914+git.ebc4a56+fpgasonline.0.0.post43`. PIOLib has no
+    libpio0: `20260914+fpgasonline.0.0.post43.gebc4a56`. PIOLib has no
     release number; Raspberry Pi version its package by date, and so do we.
     """
     if name not in LIBS:
@@ -174,8 +176,8 @@ def library_version(name: str, pins: Pins, repo_version: str, src: Path | None =
     if name == "rp1jtag":
         if src is None:
             raise FpgatoolsError("the rp1jtag version needs the fetched source tree")
-        return f"{rp1jtag_base(src)}+git{date}.{sha}+fpgasonline.{repo_version}"
-    return f"{date}+git.{sha}+fpgasonline.{repo_version}"
+        return f"{rp1jtag_base(src)}+git{date}+fpgasonline.{repo_version}.g{sha}"
+    return f"{date}+fpgasonline.{repo_version}.g{sha}"
 
 
 # --- CLI ------------------------------------------------------------------------
