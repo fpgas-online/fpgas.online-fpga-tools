@@ -84,5 +84,27 @@ def test_collect_assets_refuses_two_builds_with_one_name(tmp_path: Path):
         release.collect_assets(tmp_path)
 
 
+DBG = "bookworm_openfpgaloader-fpgasonline-dbgsym_1.1.1+fpgasonline.0.0.post62_arm64.deb"
+
+
+def test_dbgsym_debs_are_assets_but_not_indexed():
+    assert release.is_asset(DBG)
+    assert release.is_asset("raspbian-trixie_openocd-fpgasonline-git-dbgsym_"
+                            "0.12.0.post1701+fpgasonline.0.0.post62_armhf.deb")
+    assert release.is_asset(A) and release.is_asset(A + ".sha256")
+    # without the suite prefix every suite's build would claim one name
+    assert not release.is_asset(DBG.removeprefix("bookworm_"))
+    # only debug symbols: the packages themselves are in the apt repository
+    assert not release.is_asset(DBG.replace("-dbgsym_", "_"))
+    assert release.classify(DBG) is None
+    assert release.latest_index([A, DBG]) == release.latest_index([A])
+
+
+def test_collect_assets_takes_dbgsym_debs(tmp_path: Path):
+    (tmp_path / "dbgsym-bookworm-arm64-openfpgaloader-stable").mkdir()
+    (tmp_path / "dbgsym-bookworm-arm64-openfpgaloader-stable" / DBG).write_text("x")
+    assert [p.name for p in release.collect_assets(tmp_path)] == [DBG]
+
+
 def test_script_is_executable_python(tmp_path: Path):
     assert (REPO / "packaging" / "release.py").read_text().startswith("#!/usr/bin/env python3")

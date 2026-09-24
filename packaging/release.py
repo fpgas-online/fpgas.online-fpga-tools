@@ -2,6 +2,7 @@
 """Upload static build assets to the current series' rolling GitHub Release.
 
     uv run python packaging/release.py --assets built-static [--series vX.Y] [--dry-run]
+    uv run python packaging/release.py --assets dbgsym --no-index
 
 The release hangs off the nearest vX.Y series tag (the repo's tag ruleset only
 admits that shape; v0.0 sits on the root commit) and is created as a
@@ -10,6 +11,12 @@ authenticated). Asset filenames carry the full package version, so they never
 collide and are uploaded once; only latest.json is replaced on every run. It
 maps track -> tool -> arch -> {asset, version} so scripts can find the newest
 build without parsing the release page.
+
+The large -dbgsym Debian packages (debs.yml keeps those over 10 MB out of the
+apt repository) are uploaded here too, named <suite>_<file>.deb because every
+suite's build produces the same Debian filename. They are not in latest.json,
+and debs.yml passes --no-index so its run never replaces the latest.json
+static.yml writes.
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ ASSET_RE = re.compile(
     r"\.tar\.gz)(?P<sha>\.sha256)?$"
 )
 TOOL_KEY = {"openFPGALoader": "openfpgaloader", "openocd": "openocd"}
+DBGSYM_RE = re.compile(r"^[a-z]+(?:-[a-z]+)*_[a-z0-9][a-z0-9.+-]*-dbgsym_[^_/]+_[a-z0-9]+\.deb$")
 # The upstream part of a master-track version: `1.1.1.post173` (always with
 # .postN, see fpgatools/version.py), or `1.1.1+git20260915.24e46d1` on assets
 # published before versions followed git describe.
@@ -66,6 +74,11 @@ def version_key(version: str) -> tuple:
     return tuple(nums)
 
 
+def is_asset(name: str) -> bool:
+    """A file this script uploads: a build tarball, its .sha256, or a suite-named -dbgsym .deb."""
+    return bool(classify(name.removesuffix(".sha256")) or DBGSYM_RE.match(name))
+
+
 def latest_index(names: list[str]) -> dict:
     """track -> tool -> arch -> {"asset": ..., "version": ...} for the newest of each."""
     index: dict = {}
@@ -91,8 +104,7 @@ def collect_assets(assets_dir: Path) -> list[Path]:
     for p in assets_dir.rglob("*"):
         if not p.is_file():
             continue
-        base = p.name.removesuffix(".sha256")
-        if classify(base):
+        if is_asset(p.name):
             found.setdefault(p.name, []).append(p)
     clashes = {n: ps for n, ps in found.items() if len(ps) > 1}
     if clashes:
@@ -126,7 +138,8 @@ def ensure_release(tag: str, dry_run: bool) -> None:
            "--notes", "Rolling builds of the fpgas.online openFPGALoader and OpenOCD: one set of "
            "assets per green commit on main, named by package version. latest.json maps "
            "track -> tool -> arch to the newest asset. Debian packages are published to the "
-           "apt repository on GitHub Pages, not here.")
+           "apt repository on GitHub Pages; only the -dbgsym packages too large for it "
+           "(over 10 MB) are here, named <suite>_<file>.deb.")
 
 
 def existing_assets(tag: str) -> list[str]:
@@ -140,11 +153,16 @@ def main() -> int:
     ap.add_argument("--assets", required=True, help="directory of built assets to upload")
     ap.add_argument("--series", help="series tag (default: nearest vX.Y tag)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--no-index", action="store_true",
+                    help="upload only; leave latest.json alone (and allow nothing to upload)")
     args = ap.parse_args()
 
     assets_dir = Path(args.assets)
     local = collect_assets(assets_dir)
     if not local:
+        if args.no_index:
+            print(f"nothing to upload under {assets_dir}")
+            return 0
         sys.exit(f"no build assets under {assets_dir}")
     tag = args.series or series_tag()
     ensure_release(tag, args.dry_run)
@@ -159,6 +177,8 @@ def main() -> int:
     if skipped:
         print(f"already present, skipped: {len(skipped)}")
 
+    if args.no_index:
+        return 0
     names = sorted(have | {p.name for p in local})
     index = {"series": tag, "latest": latest_index(names)}
     with tempfile.TemporaryDirectory() as d:
