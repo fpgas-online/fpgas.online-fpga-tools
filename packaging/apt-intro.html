@@ -1,0 +1,20 @@
+<p><a href="https://github.com/trabucayre/openFPGALoader">openFPGALoader</a>
+and <a href="https://openocd.org/">OpenOCD</a> carrying the fpgas.online patch
+series: Raspberry Pi 5 RP1 PIO JTAG, Kosagi NeTV2 configurations, the Tiny
+Tapeout FPGA Demo Board, SPI flash identification and Device DNA / ECP5 TraceID
+reads. arm64 and armhf.</p>
+<table>
+<tr><th>Package</th><th>Track</th><th>Contents</th></tr>
+<tr><td><code>openfpgaloader-fpgasonline</code></td><td>stable</td><td>latest openFPGALoader release + patches</td></tr>
+<tr><td><code>openfpgaloader-fpgasonline-git</code></td><td>master</td><td>openFPGALoader git master + patches</td></tr>
+<tr><td><code>openocd-fpgasonline</code></td><td>stable</td><td>latest OpenOCD release + patches</td></tr>
+<tr><td><code>openocd-fpgasonline-git</code></td><td>master</td><td>OpenOCD git master + patches</td></tr>
+</table>
+<p>Each package replaces Debian's <code>openfpgaloader</code> /
+<code>openocd</code> (and the older <code>*-rp1pio</code> packages) in place.
+Versions read <code>&lt;upstream&gt;+fpgasonline.&lt;patchset&gt;</code>, e.g.
+<code>1.1.1+fpgasonline.0.0.post12</code>, or
+<code>&lt;upstream&gt;.post&lt;N&gt;+fpgasonline.&lt;patchset&gt;</code>
+for the git track, e.g. <code>1.1.1.post173+fpgasonline.0.0.post12</code>: upstream commit 173
+after its <code>v1.1.1</code> tag. Static binaries for arm64, armv7 and armv6 are on the
+<a href="https://github.com/fpgas-online/fpgas.online-fpga-tools/releases">GitHub Releases</a> page.</p>
