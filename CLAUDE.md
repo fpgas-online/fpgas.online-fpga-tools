@@ -49,8 +49,13 @@ whoever writes them.
 
 - No new tool functionality: this repo extracts, rebases and packages.
   Feature work belongs in the upstream projects or their forks.
-- Versions are derived, never typed: `<upstream>+fpgasonline.<repo version>`
-  where the repo version comes from `git describe` against `vX.Y` series tags.
+- Versions are derived, never typed, and follow `git describe` (`X.Y.postN`):
+  `<upstream>+fpgasonline.<repo version>`, where `<upstream>` is the release
+  tag or, on master and for librp1jtag0, `<tag>.post<N>` from the pin's
+  recorded describe, and the repo version is this repo's own describe
+  against `vX.Y` series tags. The one date-versioned package is our sid
+  libpio0, which follows Raspberry Pi's scheme (Tim, 2026-09-24). Any other
+  scheme needs Tim's approval first.
 - Debs are built with `dh` from `packaging/debian/<name>/`, never with
   hand-rolled `dpkg-deb` control files.
 - The Debian tools link librp1jtag shared (librp1jtag0); the static release

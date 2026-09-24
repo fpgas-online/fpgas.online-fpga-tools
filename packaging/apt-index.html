@@ -32,7 +32,8 @@ One flat repository per suite; arm64 and armhf.</p>
 <p>Each package replaces Debian's <code>openfpgaloader</code> / <code>openocd</code> (and the
 older <code>*-rp1pio</code> packages) in place. Versions read
 <code>&lt;upstream&gt;+fpgasonline.&lt;patchset&gt;</code>, e.g. <code>1.1.1+fpgasonline.0.0.post12</code>,
-or <code>&lt;upstream&gt;+git&lt;date&gt;.&lt;sha&gt;+fpgasonline.&lt;patchset&gt;</code> for the git track.</p>
+or <code>&lt;upstream&gt;.post&lt;N&gt;+fpgasonline.&lt;patchset&gt;</code> for the git track, e.g.
+<code>1.1.1.post173+fpgasonline.0.0.post12</code>: upstream commit 173 after its <code>v1.1.1</code> tag.</p>
 
 <h2>Install</h2>
 <pre>sudo install -d -m 0755 /etc/apt/keyrings

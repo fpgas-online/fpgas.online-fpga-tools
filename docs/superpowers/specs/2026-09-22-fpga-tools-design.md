@@ -171,22 +171,22 @@ commit = "85be4fa..."
 ref = "master"
 commit = "24e46d13bb8f2bc9371e9ca8443ece2fafc4b20d"
 describe = "v1.1.1-173-g24e46d1"     # git describe --tags at that commit
-date = "2026-09-15"                    # committer date, for +gitYYYYMMDD
+date = "2026-09-15"                    # committer date, informational
 
 [openocd]
 url = "https://github.com/openocd-org/openocd.git"
 [openocd.stable]  ref = "v0.12.0"  commit = "..."
-[openocd.master]  ref = "master"   commit = "b04ccfe..."  describe = "v0.12.0-NNNN-gb04ccfe"  date = "2026-09-20"
+[openocd.master]  ref = "master"   commit = "b04ccfe..."  describe = "v0.12.0-1701-gb04ccfef"  date = "2026-09-20"
 
 [rp1jtag]        # librp1jtag: packaged shared (librp1jtag0), static in the release binaries
 url = "https://github.com/mithro/rp1-jtag.git"
-commit = "d9d7d8d..."                 # origin/main
-date = "2026-09-18"                    # committer date, for the librp1jtag0 version
+commit = "f91dfc7..."                 # origin/main
+describe = "v0.0-95-gf91dfc7"           # git describe, for the librp1jtag0 version
 
 [piolib]         # raspberrypi/utils piolib, the /dev/pio0 backend of librp1jtag
 url = "https://github.com/raspberrypi/utils.git"
 commit = "..."
-date = "2026-09-14"
+date = "2026-09-14"                    # no tags upstream: the libpio0 version is date-first
 ```
 
 `fpgatools fetch <name> [<track>]` does `git init; git fetch --depth 1 <url>
@@ -206,8 +206,9 @@ their own Debian packages, which the tool packages depend on.**
   here from the `[rp1jtag]` pin, for every suite and architecture, and
   published in the same apt repository. They keep the binary package names
   mithro/rp1-jtag published (frozen at `0.0.post87`; its deb.yml is gone), at
-  `<project VERSION>+git<date>+fpgasonline.<R>.g<sha7>` (`0.1.0+git20260918+fpgasonline.R.gd9d7d8d`),
-  which sorts above them, so hosts upgrade in place. The shared library
+  `<tag>.post<N>+fpgasonline.<R>` from the pin's describe
+  (`0.0.post95+fpgasonline.R`), continuing their numbering and sorting above
+  it, so hosts upgrade in place. The shared library
   links `libpio.so.0` and exports only `rp1_jtag_*` (a linker version
   script): rp1-jtag's own build carried a private PIOLib and exported its
   `pio_*` functions (9 of which libpio0 also defines) and its own
@@ -246,29 +247,35 @@ convention (`vX.Y` series tag on a commit → `X.Y`, N commits later →
 | Track | Debian version | Example |
 |---|---|---|
 | stable | `<upstream tag sans v>+fpgasonline.<R>` | `1.1.1+fpgasonline.0.0.post12` |
-| master | `<last tag sans v>+git<YYYYMMDD>.<sha7>+fpgasonline.<R>` | `1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12` |
+| master | `<last tag sans v>.post<N>+fpgasonline.<R>` | `1.1.1.post173+fpgasonline.0.0.post12` |
 
-Rules: Debian's `+git<date>.<sha>` snapshot convention marks a git build;
+Rules: every version part follows `git describe` in the fpgas-online
+`X.Y.postN` convention **[decision 2026-09-24, Tim: always postN unless he
+approves otherwise]**. On master `<N>` is the upstream describe's commit
+count, recorded in `upstreams.toml`, and is kept even at 0 (`1.1.1.post0`)
+so master never shares a version or a static asset name with stable. A
+count rises with every upstream commit, so two bumps on one day order
+correctly, which `+git<date>.<sha>` (used until 2026-09-24) did not; `.post`
+sorts above `+git`, so hosts upgrade from those versions.
 `+fpgasonline.` marks it as ours and carries the patchset revision; all
 characters are legal in a Debian upstream version and there is no `-`, so
 source format `3.0 (native)` applies. Both tracks strictly out-version the
-Debian archive (`1.1.1+... > 0.13.1-1`; `0.12.0+git... > 0.12.0-4`) so a
+Debian archive (`1.1.1+... > 0.13.1-1`; `0.12.0.post1701+... > 0.12.0-4`) so a
 plain `apt install` from a host with both sources prefers ours.
 
-The shared libraries (section 6) follow the same pattern from their single
-pin: `librp1jtag0` `<rp1-jtag project VERSION>+git<YYYYMMDD>+fpgasonline.<R>.g<sha7>`
-(`0.1.0+git20260918+fpgasonline.0.0.post43.gd9d7d8d`, above rp1-jtag's own
-`0.0.postN`), our sid `libpio0` `<YYYYMMDD>+fpgasonline.<R>.g<sha7>`
-(`20260914+fpgasonline.0.0.post43.gebc4a56`), date-first as Raspberry
-Pi's own `libpio0` versions are. R precedes the sha so that two pins with
-the same commit date (two rp1-jtag pushes in a day, each dispatching a
-bump) order by R rather than by hash. The master-track tool versions above
-keep the older `+git<date>.<sha7>+fpgasonline.<R>` shape and so share that
-same-day weakness; changing them would change a published version scheme
-and is left as a separate decision.
+The shared libraries (section 6): `librp1jtag0` follows the same rule from
+its pin's describe, `<tag>.post<N>+fpgasonline.<R>` (`0.0.post95+fpgasonline.0.0.post49`),
+continuing the `0.0.postN` versions mithro/rp1-jtag published; the pin must
+be past `v0.0-87`, the last of those. Our sid `libpio0` is the one exception
+Tim approved (2026-09-24): `<YYYYMMDD>+fpgasonline.<R>.g<sha7>`
+(`20260914+fpgasonline.0.0.post49.gebc4a56`), date-first like Raspberry Pi's
+own `libpio0`, since raspberrypi/utils has no tags to describe against and
+the package exists only where Raspberry Pi has none. R precedes the sha so
+two pins with the same commit date order by R rather than by hash.
 
 The binaries report the same string: openFPGALoader prints
-`openFPGALoader v1.1.1+fpgasonline.0.0.post12` (via patch 1),
+`openFPGALoader v1.1.1+fpgasonline.0.0.post12` (via patch 1; on master
+`v1.1.1.post173+fpgasonline.0.0.post12`),
 OpenOCD prints `Open On-Chip Debugger 0.12.0+dev-01234-gb04ccfe+fpgasonline.0.0.post12`
 (via patch 1; for stable `0.12.0+fpgasonline.0.0.post12`).
 

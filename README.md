@@ -52,10 +52,13 @@ build, and orders correctly for `apt`:
 | Track | Format | Example |
 |---|---|---|
 | stable | `<upstream release>+fpgasonline.<patchset>` | `1.1.1+fpgasonline.0.0.post12` |
-| master | `<last release>+git<YYYYMMDD>.<sha7>+fpgasonline.<patchset>` | `1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12` |
+| master | `<last release>.post<N>+fpgasonline.<patchset>` | `1.1.1.post173+fpgasonline.0.0.post12` |
 
-`<patchset>` is this repository's own version from `git describe` against
-its `vX.Y` series tags: `0.0.post12` is twelve commits after `v0.0`. It is
+Both parts follow `git describe`. On master, `1.1.1.post173` is upstream's
+commit 173 after its `v1.1.1` tag (`.post0` on the tag itself, so master
+never looks like stable). `<patchset>` is this repository's own version from
+`git describe` against its `vX.Y` series tags: `0.0.post12` is twelve
+commits after `v0.0`. It is
 the same string in the package version, in `openFPGALoader --Version`
 (`v1.1.1+fpgasonline.0.0.post12`), in `openocd -v`
 (`Open On-Chip Debugger 0.12.0+fpgasonline.0.0.post12`, or
@@ -87,8 +90,8 @@ Both depend on two shared libraries:
 
 | Package | Library | Where it comes from |
 |---|---|---|
-| `librp1jtag0` | RP1 PIO JTAG ([mithro/rp1-jtag](https://github.com/mithro/rp1-jtag)); exports the `rp1_jtag_*` API only | this repository, every suite. Its version (`0.1.0+git<date>+fpgasonline.<patchset>.g<sha7>`) sorts above the `0.0.postN` packages mithro/rp1-jtag published under the same name, so it upgrades them in place |
-| `libpio0` | PIOLib, the `/dev/pio0` user-space API ([raspberrypi/utils](https://github.com/raspberrypi/utils) `piolib/`) | **bookworm, trixie: Raspberry Pi's archive** (`archive.raspberrypi.com`, which every Raspberry Pi OS install has configured). sid: this repository, versioned `<YYYYMMDD>+fpgasonline.<patchset>.g<sha7>` |
+| `librp1jtag0` | RP1 PIO JTAG ([mithro/rp1-jtag](https://github.com/mithro/rp1-jtag)); exports the `rp1_jtag_*` API only | this repository, every suite. Its version (`0.0.post<N>+fpgasonline.<patchset>`, from rp1-jtag's `git describe`) continues the `0.0.postN` packages mithro/rp1-jtag published under the same name and sorts above them, so it upgrades them in place |
+| `libpio0` | PIOLib, the `/dev/pio0` user-space API ([raspberrypi/utils](https://github.com/raspberrypi/utils) `piolib/`) | **bookworm, trixie: Raspberry Pi's archive** (`archive.raspberrypi.com`, which every Raspberry Pi OS install has configured). sid: this repository, versioned `<YYYYMMDD>+fpgasonline.<patchset>.g<sha7>`, date-first like Raspberry Pi's own (raspberrypi/utils has no tags to describe against) |
 
 So on bookworm or trixie the packages install on Raspberry Pi OS, or on any
 Debian with Raspberry Pi's archive added; plain Debian without it has no
