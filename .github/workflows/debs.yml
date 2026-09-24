@@ -7,8 +7,12 @@ name: Debian packages + apt repository
 # repository per suite to this repository's GitHub Pages through
 # mithro/apt-repo-action:
 #
-#   deb [signed-by=/etc/apt/keyrings/fpgas-online-fpga-tools.gpg] \
+#   deb [signed-by=/etc/apt/keyrings/fpgas.online-fpga-tools.gpg] \
 #       https://fpgas.online/fpgas.online-fpga-tools/<suite>/ ./
+#
+# -dbgsym packages over 10 MB (openFPGALoader's, ~20 MB each; they were 79% of
+# the repository) go to the series' GitHub Release instead, as
+# <suite>_<file>.deb, so the Pages site has room to keep earlier versions.
 #
 # Pull requests build everything and publish nothing.
 #
@@ -114,14 +118,59 @@ jobs:
             "debian:${{ matrix.suite }}" \
             sh -ec 'packaging/build-deb.sh ${{ matrix.tool }} ${{ matrix.track }}'
 
-      # The publish workflow derives the suite from the text between "debs-"
-      # and the next dash, so anything after "debs-<suite>-<arch>" only keeps
+      # Debug symbols over 10 MB go to the GitHub Release, not the apt
+      # repository (see the top of this file). Every suite's build names its
+      # .deb the same, so the suite is prefixed. built-debs/ is root's (the
+      # build ran in a container), hence sudo.
+      - name: Set aside debug symbols too large for the apt repository
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set -eu
+          mkdir -p built-dbgsym
+          for f in built-debs/*-dbgsym_*.deb; do
+            [ -e "$f" ] || continue
+            if [ "$(stat -c %s "$f")" -gt 10000000 ]; then
+              sudo mv -v "$f" "built-dbgsym/${SUITE}_$(basename "$f")"
+            fi
+          done
+
+      # The publish workflow files each artifact under the longest suite its
+      # name starts with, so anything after "debs-<suite>-<arch>" only keeps
       # the artifact names distinct.
       - uses: actions/upload-artifact@v4
         with:
           name: debs-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
           path: built-debs/*.deb
           if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dbgsym-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
+          path: built-dbgsym/*.deb
+          if-no-files-found: ignore
+
+  release-dbgsym:
+    name: large debug symbols to the series release
+    if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # upload release assets
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # release.py finds the series tag with git describe
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dbgsym-*
+          path: dbgsym/
+      # --no-index: latest.json is static.yml's, and runs concurrently.
+      - name: Upload to the series release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python packaging/release.py --assets dbgsym --no-index
 
   publish:
     # Scoped to this job alone: a job calling a reusable workflow sets the
@@ -133,7 +182,7 @@ jobs:
     if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: [libs, build]
     # Pinned by commit: this job hands the signing key to the called workflow.
-    # main was 207d875 on 2026-09-24; bump deliberately.
+    # main was ece43dd on 2026-09-24; bump deliberately.
     uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@ece43dd05997c5cc7f7852af084f319431147ca8
     with:
       suites: "bookworm trixie sid"
@@ -141,6 +190,7 @@ jobs:
       description: "fpgas.online builds of openFPGALoader and OpenOCD (RP1 PIO JTAG, NeTV2, Tiny Tapeout FPGA board, SPI flash info)"
       # Transitional: the key's old names, until every client has moved to
       # fpgas.online-fpga-tools.gpg (docs/conventions.md in mithro/apt-repo-action).
+      # Earlier versions are kept up to the default size-limit-mb (900).
       legacy-paths: "fpgas-online-fpga-tools.gpg fpgas-online-fpga-tools.asc"
     secrets:
       gpg-private-key: ${{ secrets.APT_GPG_PRIVATE_KEY }}

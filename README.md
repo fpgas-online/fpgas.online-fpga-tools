@@ -112,8 +112,13 @@ page, on the rolling release of the current series, named by version:
   `share/openocd/scripts`. OpenOCD needs its Tcl tree; run it as
   `OPENOCD_SCRIPTS=<dir>/share/openocd/scripts bin/openocd ...` or with `-s`.
 - `latest.json`: `{"series": "vX.Y", "latest": {track: {tool: {arch: {asset, version}}}}}` for scripts.
+- `<suite>_<package>-dbgsym_<version>_<arch>.deb`: debug symbols for the
+  Debian packages, where they are over 10 MB (openFPGALoader's, ~20 MB).
+  Those are left out of the apt repository so it has room to keep earlier
+  versions; smaller `-dbgsym` packages are installable from it as usual.
+  `apt install ./<file>.deb` it next to the matching package version.
 
-Every asset has a `.sha256` beside it.
+Every tarball has a `.sha256` beside it.
 
 The `libgpiod` backends (openFPGALoader's `-c libgpiod` cable, OpenOCD's
 `linuxgpiod` adapter) speak the kernel's GPIO character device, and the
