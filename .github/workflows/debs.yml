@@ -134,7 +134,7 @@ jobs:
     needs: [libs, build]
     # Pinned by commit: this job hands the signing key to the called workflow.
     # main was 207d875 on 2026-09-24; bump deliberately.
-    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@493f13bb3dc4b9c5cecfd95632c9f80d28786906
+    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@ece43dd05997c5cc7f7852af084f319431147ca8
     with:
       suites: "bookworm trixie sid"
       architectures: "arm64 armhf"
