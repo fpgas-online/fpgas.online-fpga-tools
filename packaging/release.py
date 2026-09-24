@@ -29,6 +29,15 @@ ASSET_RE = re.compile(
     r"\.tar\.gz)(?P<sha>\.sha256)?$"
 )
 TOOL_KEY = {"openFPGALoader": "openfpgaloader", "openocd": "openocd"}
+# The upstream part of a master-track version: `1.1.1.post173` (always with
+# .postN, see fpgatools/version.py), or `1.1.1+git20260915.24e46d1` on assets
+# published before versions followed git describe.
+MASTER_UPSTREAM_RE = re.compile(r"(\.post\d+|\+git\d{8}\.[0-9a-f]+)$")
+
+
+def track_of(version: str) -> str:
+    upstream = version.rsplit("+fpgasonline.", 1)[0]
+    return "master" if MASTER_UPSTREAM_RE.search(upstream) else "stable"
 
 
 def classify(name: str) -> dict | None:
@@ -39,7 +48,7 @@ def classify(name: str) -> dict | None:
     version = m.group("version")
     return {
         "tool": TOOL_KEY[m.group("tool")],
-        "track": "master" if "+git" in version else "stable",
+        "track": track_of(version),
         "version": version,
         "arch": m.group("arch"),
         "file": m.group("file"),

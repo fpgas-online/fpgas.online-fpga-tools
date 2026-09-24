@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+# A frozen copy of upstreams.toml. Tests that assert concrete versions read
+# this, not the real file, which the daily bump rewrites.
+FIXTURE_PINS = Path(__file__).parent / "data" / "upstreams.toml"
+
 GIT_ENV = {
     "GIT_CONFIG_GLOBAL": "/dev/null",
     "GIT_CONFIG_NOSYSTEM": "1",

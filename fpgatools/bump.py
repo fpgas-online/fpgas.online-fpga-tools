@@ -58,8 +58,9 @@ class PinUpdate:
             parts.append(f"{self.old.ref} -> {self.new.ref}")
         if self.old.commit != self.new.commit:
             parts.append(f"{self.old.commit[:7]} -> {self.new.commit[:7]}")
-        if self.new.describe and self.old.describe != self.new.describe:
-            parts.append(f"({self.new.describe}, {self.new.date})")
+        detail = [v for v in (self.new.describe, self.new.date) if v is not None]
+        if detail and (self.old.describe, self.old.date) != (self.new.describe, self.new.date):
+            parts.append(f"({', '.join(detail)})")
         return f"{where}: " + " ".join(parts)
 
 
@@ -160,10 +161,16 @@ def new_pins(pins: Pins, root: Path = META_ROOT) -> list[PinUpdate]:
             updates.append(PinUpdate(name, "stable", old, Pin(
                 ref=tag, commit=tag_commit(meta, tag), subdir=old.subdir)))
         else:
+            # A library pin records whichever of describe/date its version
+            # uses: rp1-jtag has release tags to describe against, PIOLib
+            # (raspberrypi/utils) has none and is versioned by date.
             old = pins.pin(name)
             head = branch_head(meta, old.ref)
             updates.append(PinUpdate(name, None, old, Pin(
-                ref=old.ref, commit=head, subdir=old.subdir)))
+                ref=old.ref, commit=head,
+                describe=describe(meta, head) if old.describe is not None else None,
+                date=commit_date(meta, head) if old.date is not None else None,
+                subdir=old.subdir)))
     return updates
 
 

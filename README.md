@@ -18,7 +18,7 @@ The exact pins are in [`upstreams.toml`](upstreams.toml).
 
 | Feature | openFPGALoader | OpenOCD | Upstream status |
 |---|---|---|---|
-| **RP1 PIO JTAG** on a Raspberry Pi 5: the RP1's PIO block shifts data instead of bit-banging PCIe-attached GPIOs (rp1-jtag's benchmarks: 6.5 s instead of 39 s for a 3.8 MB Artix-7 bitstream) | `rp1pio` cable | `rp1_pio_jtag` adapter, `interface/raspberrypi-rp1-pio.cfg` | not upstream; drivers are the copies [mithro/rp1-jtag](https://github.com/mithro/rp1-jtag) ships in its own debs; needs librp1jtag, linked in statically |
+| **RP1 PIO JTAG** on a Raspberry Pi 5: the RP1's PIO block shifts data instead of bit-banging PCIe-attached GPIOs (rp1-jtag's benchmarks: 6.5 s instead of 39 s for a 3.8 MB Artix-7 bitstream) | `rp1pio` cable | `rp1_pio_jtag` adapter, `interface/raspberrypi-rp1-pio.cfg` | not upstream; drivers are the copies [mithro/rp1-jtag](https://github.com/mithro/rp1-jtag) ships; they call librp1jtag (the `librp1jtag0` package here, linked in statically in the static binaries) |
 | **Kosagi NeTV2** on a Pi header, old-style (Pi 1-4 `bcm2835gpio`) and new-style (Pi 5 RP1 PIO), plus `linuxgpiod`, a picker and a jtagspi flash variant | `netv2`, `netv2_100` boards with GPIO cable auto-detection | `board/netv2-rpi*.cfg` | openFPGALoader boards: [PR #643](https://github.com/trabucayre/openFPGALoader/pull/643) open |
 | **Tiny Tapeout FPGA Demo Board** (iCE40UP5K behind an RP2040/RP2350 running MicroPython) | `tt_fpga` board, `tt_micropython` cable | | not upstream ([mithro/openFPGALoader tt-fpga-support](https://github.com/mithro/openFPGALoader/tree/tt-fpga-support)) |
 | **SPI flash info and unique ID**: JEDEC id, SFDP parameters, factory unique id, machine-readable output | `--flash-info`, `--flash-info-json` | | not upstream ([mithro/openFPGALoader flash-info](https://github.com/mithro/openFPGALoader/tree/flash-info)) |
@@ -52,10 +52,13 @@ build, and orders correctly for `apt`:
 | Track | Format | Example |
 |---|---|---|
 | stable | `<upstream release>+fpgasonline.<patchset>` | `1.1.1+fpgasonline.0.0.post12` |
-| master | `<last release>+git<YYYYMMDD>.<sha7>+fpgasonline.<patchset>` | `1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12` |
+| master | `<last release>.post<N>+fpgasonline.<patchset>` | `1.1.1.post173+fpgasonline.0.0.post12` |
 
-`<patchset>` is this repository's own version from `git describe` against
-its `vX.Y` series tags: `0.0.post12` is twelve commits after `v0.0`. It is
+Both parts follow `git describe`. On master, `1.1.1.post173` is upstream's
+commit 173 after its `v1.1.1` tag (`.post0` on the tag itself, so master
+never looks like stable). `<patchset>` is this repository's own version from
+`git describe` against its `vX.Y` series tags: `0.0.post12` is twelve
+commits after `v0.0`. It is
 the same string in the package version, in `openFPGALoader --Version`
 (`v1.1.1+fpgasonline.0.0.post12`), in `openocd -v`
 (`Open On-Chip Debugger 0.12.0+fpgasonline.0.0.post12`, or
@@ -82,6 +85,17 @@ sudo apt install openfpgaloader-fpgasonline openocd-fpgasonline   # or the -git 
 The packages `Provide`/`Conflict`/`Replace` Debian's `openfpgaloader` and
 `openocd` (and the earlier `openfpgaloader-rp1pio` / `openocd-rp1pio` from
 mithro/rp1-jtag), so one `apt install` swaps them in place.
+
+Both depend on two shared libraries:
+
+| Package | Library | Where it comes from |
+|---|---|---|
+| `librp1jtag0` | RP1 PIO JTAG ([mithro/rp1-jtag](https://github.com/mithro/rp1-jtag)); exports the `rp1_jtag_*` API only | this repository, every suite. Its version (`0.0.post<N>+fpgasonline.<patchset>`, from rp1-jtag's `git describe`) continues the `0.0.postN` packages mithro/rp1-jtag published under the same name and sorts above them, so it upgrades them in place |
+| `libpio0` | PIOLib, the `/dev/pio0` user-space API ([raspberrypi/utils](https://github.com/raspberrypi/utils) `piolib/`) | **bookworm, trixie: Raspberry Pi's archive** (`archive.raspberrypi.com`, which every Raspberry Pi OS install has configured). sid: this repository, versioned `<YYYYMMDD>+fpgasonline.<patchset>.g<sha7>`, date-first like Raspberry Pi's own (raspberrypi/utils has no tags to describe against) |
+
+So on bookworm or trixie the packages install on Raspberry Pi OS, or on any
+Debian with Raspberry Pi's archive added; plain Debian without it has no
+`libpio0`. The static binaries below have no such dependency.
 
 ### Static binaries (arm64, armv7, armv6)
 
@@ -142,9 +156,13 @@ openFPGALoader -b tt_fpga design.bin
 upstreams.toml            pinned inputs: openFPGALoader, OpenOCD, librp1jtag, piolib
 patches/<tool>/<track>/   git format-patch series
 fpgatools/                stdlib-only CLI: fetch, apply, export, compare, version, debianize, bump
-packaging/debian/<tool>/  debhelper templates rendered by `fpgatools debianize`
+packaging/debian/<name>/  debhelper templates rendered by `fpgatools debianize`
+                          (the two tools, and the libraries rp1jtag and piolib)
 packaging/static/         Alpine (musl) static build scripts
+packaging/build-libs.sh   builds librp1jtag0 (and libpio0 where Raspberry Pi has none)
 packaging/build-deb.sh    what the deb workflow runs inside debian:<suite>
+packaging/libpio.sh       which suites take libpio0 from Raspberry Pi's archive
+packaging/keys/           Raspberry Pi's archive keyring, for the build containers
 packaging/release.py      uploads static assets to the series release
 .github/workflows/        ci.yml, debs.yml, static.yml, daily.yml
 docs/superpowers/         design spec and implementation plan
@@ -168,8 +186,9 @@ Everything CI does runs in plain containers, so it runs on a developer box
 with Docker:
 
 ```bash
-# a Debian package, native architecture
-docker run --rm -v "$PWD:/work" -w /work -e REPO=/work debian:trixie \
+# a Debian package, native architecture; builds librp1jtag0 (and libpio0
+# where Raspberry Pi's archive has none) first, into built-libs/
+docker run --rm -v "$PWD:/work" -w /work -e REPO=/work -e SUITE=trixie debian:trixie \
   sh -ec 'packaging/build-deb.sh openocd stable'          # -> built-debs/*.deb
 
 # a static binary
@@ -185,8 +204,9 @@ docker run --rm -v "$PWD:/work" -w /work -e REPO=/work alpine:3.21 \
 
 `daily.yml` runs every day at 05:23 UTC and needs nobody:
 
-1. `fpgatools bump` moves the `master` pins to the upstream heads and the
-   `stable` pins to the newest release tag, and re-applies every series.
+1. `fpgatools bump` moves the `master` pins to the upstream heads, the
+   `stable` pins to the newest release tag and the librp1jtag and PIOLib
+   pins to their heads, and re-applies every series.
 2. The whole deb matrix and the whole static matrix build against those
    candidate pins, on a branch, publishing nothing.
 3. Only if every one of those builds passed and a pin actually moved does
@@ -209,6 +229,12 @@ fleet-wide read that must not see a tool change mid-way should avoid
 A series marked ❌ in the issue needs a rebase in a build tree, as above.
 `uv run fpgatools bump --dry-run` reproduces the report locally.
 
+The same run can also be started on demand by a `repository_dispatch` of
+event type `rp1jtag-updated`, which mithro/rp1-jtag sends when its main
+moves (it needs a token with access to this repository; without one the
+next daily run picks the change up anyway). The window above does not apply
+to those runs.
+
 ## Publishing
 
 Only `main` publishes. `debs.yml` signs and deploys the apt repository to
@@ -222,6 +248,7 @@ requests build everything and publish nothing.
 The tooling in this repository is Apache-2.0. The patches are contributions
 to their upstream projects and carry those licences: openFPGALoader
 Apache-2.0, OpenOCD GPL-2.0-or-later. librp1jtag (Apache-2.0) and PIOLib
-(BSD-3-Clause) are linked in statically.
+(BSD-3-Clause) are shared libraries in the Debian packages and linked in
+statically in the static binaries.
 
 Design: [`docs/superpowers/specs/2026-09-22-fpga-tools-design.md`](docs/superpowers/specs/2026-09-22-fpga-tools-design.md).

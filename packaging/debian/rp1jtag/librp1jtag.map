@@ -1,0 +1,7 @@
+/* Linker version script for librp1jtag.so.0: export the rp1_jtag_* API
+   only. Anonymous (no version node), so symbol lookups stay unversioned as
+   they were for the 0.0.postN packages mithro/rp1-jtag published. */
+{
+	global: rp1_jtag_*;
+	local: *;
+};

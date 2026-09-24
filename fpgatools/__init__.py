@@ -10,3 +10,6 @@ REPO = Path(__file__).resolve().parent.parent
 
 TOOLS = ("openfpgaloader", "openocd")
 TRACKS = ("stable", "master")
+# The libraries packaged as shared Debian libraries alongside the tools. Each
+# has one pin (no tracks) in upstreams.toml.
+LIBS = ("rp1jtag", "piolib")

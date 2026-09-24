@@ -1,0 +1,37 @@
+Source: @SOURCE@
+Section: libs
+Priority: optional
+Maintainer: Tim 'mithro' Ansell <me@mith.ro>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.14)
+Standards-Version: 4.6.2
+Homepage: https://github.com/fpgas-online/fpgas.online-fpga-tools
+Vcs-Git: https://github.com/fpgas-online/fpgas.online-fpga-tools.git
+Vcs-Browser: https://github.com/fpgas-online/fpgas.online-fpga-tools
+
+Package: libpio0
+Architecture: any
+Multi-Arch: same
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Library for accessing Raspberry Pi 5 PIO hardware (fpgas.online build)
+ A user-space API to the rp1-pio driver for the PIO hardware of the
+ Raspberry Pi 5, cloning the Pico SDK PIO API. This is the fpgas.online
+ build of the piolib/ directory of @UPSTREAM_URL@
+ @UPSTREAM_REF@ (commit @UPSTREAM_COMMIT@).
+ .
+ Raspberry Pi's own archive ships libpio0 for the suites Raspberry Pi OS
+ is built on; the fpgas.online-fpga-tools apt repository publishes this
+ build only for the suites it does not cover, so librp1jtag0 can be
+ installed there too.
+
+Package: libpio-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: libpio0 (= ${binary:Version}), ${misc:Depends}
+Description: Library for accessing Raspberry Pi 5 PIO hardware (development files)
+ A user-space API to the rp1-pio driver for the PIO hardware of the
+ Raspberry Pi 5, cloning the Pico SDK PIO API.
+ .
+ This package contains the headers (under /usr/include/piolib) and the
+ linker symlink needed to build against libpio0.

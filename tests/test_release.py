@@ -13,6 +13,7 @@ A = "openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64.tar.gz"
 B = "openFPGALoader-1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12-linux-armv7.tar.gz"
 C = "openocd-0.12.0+git20260920.b04ccfe+fpgasonline.0.0.post13-linux-arm64.tar.gz"
 D = "openocd-0.12.0+fpgasonline.0.0.post9-linux-armv6.tar.gz"
+E = "openocd-0.12.0.post1701+fpgasonline.0.0.post49-linux-arm64.tar.gz"
 
 
 def test_classify():
@@ -28,6 +29,17 @@ def test_classify():
     assert release.classify("openocd-foo-linux-mips.tar.gz") is None
     # a bare binary is no longer published
     assert release.classify("openFPGALoader-1.1.1+fpgasonline.0.0.post1-linux-arm64") is None
+
+
+def test_track_of_describe_and_legacy_date_versions():
+    assert release.track_of("1.1.1+fpgasonline.0.0.post12") == "stable"
+    assert release.track_of("0.12.0+fpgasonline.0.1") == "stable"
+    assert release.track_of("1.1.1.post173+fpgasonline.0.0.post49") == "master"
+    assert release.track_of("1.1.1.post0+fpgasonline.0.0.post49") == "master"
+    # published before the switch to git-describe versions
+    assert release.track_of("0.12.0+git20260920.b04ccfe+fpgasonline.0.0.post13") == "master"
+    # the repo's own .postN is not the upstream's
+    assert release.track_of("1.1.1+fpgasonline.0.0.post9") == "stable"
 
 
 def test_version_key_orders_by_patchset_revision():
@@ -47,6 +59,9 @@ def test_latest_index_picks_newest_per_track_tool_arch():
     assert idx["master"]["openocd"]["arm64"]["asset"] == C
     assert idx["stable"]["openocd"]["armv6"]["asset"] == D
     assert "arm64" not in idx["stable"]["openocd"]
+    # a describe-versioned master build replaces the older date-versioned one
+    idx = release.latest_index([C, E])
+    assert idx["master"]["openocd"]["arm64"]["asset"] == E
 
 
 def test_collect_assets_walks_one_directory_per_artifact(tmp_path: Path):

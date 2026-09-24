@@ -63,9 +63,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # No LIBS_DIR: build-deb.sh builds librp1jtag0 first, and libpio0 too,
+      # since Raspberry Pi's archive has no amd64.
       - name: Build and install the package in debian:trixie
         run: |
-          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work \
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work -e SUITE=trixie \
             debian:trixie sh -ec 'packaging/build-deb.sh ${{ matrix.tool }} ${{ matrix.track }}'
       # Named so the apt publish step (pattern debs-*) never picks these up.
       - uses: actions/upload-artifact@v4

@@ -6,7 +6,7 @@ import pytest
 from fpgatools import REPO, bump
 from fpgatools.cli import FpgatoolsError
 from fpgatools.pins import Pin, load
-from tests.conftest import git
+from tests.conftest import FIXTURE_PINS, git
 
 
 def test_describe_skips_release_candidates(tmp_path: Path):
@@ -78,7 +78,7 @@ def test_rewrite_pins_missing_table_or_line():
 
 
 def test_markdown_report():
-    pins = load()
+    pins = load(FIXTURE_PINS)
     r = bump.BumpReport(updates=[_update(pins, "openocd", "master", commit="e" * 40,
                                          describe="v0.12.0-1800-geeeeeee", date="2026-10-05")])
     r.applied[("openocd", "master")] = "OK"
@@ -88,6 +88,14 @@ def test_markdown_report():
     assert "✅ `openocd/master`: OK" in md
     assert "❌ `openocd/stable`: CONFLICT: 0002-foo.patch" in md
     assert r.changed
+
+
+def test_markdown_report_library_pins():
+    pins = load(FIXTURE_PINS)
+    rp1 = _update(pins, "rp1jtag", None, commit="f" * 40, describe="v0.0-96-gfffffff")
+    pio = _update(pins, "piolib", None, commit="e" * 40, date="2026-10-05")
+    assert rp1.describe_change().endswith("-> fffffff (v0.0-96-gfffffff)")
+    assert pio.describe_change().endswith("-> eeeeeee (2026-10-05)")
 
 
 def test_bump_against_local_upstreams(tmp_path: Path):
@@ -114,7 +122,11 @@ def test_bump_against_local_upstreams(tmp_path: Path):
     (lib / "g").write_text("x\n")
     git(lib, "add", "g")
     git(lib, "commit", "-q", "-m", "lib")
+    git(lib, "tag", "-a", "v0.0", "-m", "v0.0")
+    (lib / "g").write_text("y\n")
+    git(lib, "commit", "-q", "-am", "lib two")
     libhead = git(lib, "rev-parse", "HEAD").strip()
+    libdate = git(lib, "log", "-1", "--format=%cd", "--date=short").strip()
 
     pins_file = tmp_path / "upstreams.toml"
     pins_file.write_text(f"""# test pins
@@ -144,11 +156,13 @@ date = "2020-01-01"
 url = "file://{lib}"
 ref = "main"
 commit = "{'0' * 40}"
+describe = "v0.0"
 
 [piolib]
 url = "file://{lib}"
 ref = "main"
 commit = "{libhead}"
+date = "{libdate}"
 subdir = "piolib"
 """)
     report = bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
@@ -160,7 +174,11 @@ subdir = "piolib"
     v110 = git(up, "rev-parse", "v1.1.0^{commit}")
     assert data["openfpgaloader"]["stable"] == {"ref": "v1.1.0", "commit": v110}
     assert data["rp1jtag"]["commit"] == libhead
+    # each library pin keeps the one field its version uses
+    assert data["rp1jtag"]["describe"].startswith("v0.0-1-g")  # librp1jtag0 0.0.post1
+    assert "date" not in data["rp1jtag"]
     assert data["piolib"]["commit"] == libhead  # unchanged, still correct
+    assert data["piolib"]["date"] == libdate and "describe" not in data["piolib"]
     # a second run is a no-op
     report2 = bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
     assert not report2.changed

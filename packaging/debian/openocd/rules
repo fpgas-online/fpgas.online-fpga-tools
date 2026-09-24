@@ -5,11 +5,7 @@
 # `openocd -v` names this exact build.
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 export OPENOCD_LOCAL_VERSION = @TOOL_VERSION@
-
-# librp1jtag and piolib are installed (static only) under this prefix by
-# packaging/build-rp1jtag.sh before dpkg-buildpackage runs.
-RP1JTAG_PREFIX ?= /usr/local
-export PKG_CONFIG_PATH := $(RP1JTAG_PREFIX)/lib/pkgconfig$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH))
+# rp1_pio_jtag links the shared librp1jtag0, found through rp1jtag.pc.
 
 # --enable-linuxgpiod or --disable-linuxgpiod: the 0.12.0 release cannot be
 # built against libgpiod 2.x (trixie, sid); see packaging/linuxgpiod-flag.sh.

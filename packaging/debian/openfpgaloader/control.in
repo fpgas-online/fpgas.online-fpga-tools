@@ -10,6 +10,7 @@ Build-Depends: debhelper-compat (= 13),
                libhidapi-dev,
                libudev-dev,
                libgpiod-dev,
+               librp1jtag-dev,
                zlib1g-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/fpgas-online/fpgas.online-fpga-tools
@@ -26,8 +27,8 @@ Description: openFPGALoader with the fpgas.online patch series (@TRACK@)
  openFPGALoader is a universal utility for programming FPGAs. This is the
  fpgas.online build of upstream @UPSTREAM_REF@ (commit @UPSTREAM_COMMIT@)
  plus a patch series that is not yet upstream:
-  * rp1pio cable: JTAG through the Raspberry Pi 5 RP1 PIO block (librp1jtag,
-    linked in statically) instead of bit-banging PCIe-attached GPIOs;
+  * rp1pio cable: JTAG through the Raspberry Pi 5 RP1 PIO block (the
+    shared librp1jtag0) instead of bit-banging PCIe-attached GPIOs;
   * netv2 / netv2_100 boards with an auto-detected GPIO cable;
   * tt_fpga board / tt_micropython cable for the Tiny Tapeout FPGA Demo
     Board (iCE40UP5K behind an RP2040/RP2350 running MicroPython);

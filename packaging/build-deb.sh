@@ -3,20 +3,26 @@
 # container (or any Debian host) with the repository mounted at $REPO
 # (default /work) and writes the .deb files to $OUT (default $REPO/built-debs).
 #
-#   packaging/build-deb.sh <tool> <track>
+#   SUITE=<suite> [LIBS_DIR=<dir>] packaging/build-deb.sh <tool> <track>
 #
-# Steps: install the toolchain, fetch the pinned upstreams and apply the
-# patch series (fpgatools), build librp1jtag+piolib statically, render
-# debian/ (fpgatools debianize), dpkg-buildpackage, then install the result
-# and run the binary once so a broken package fails here and not on a Pi.
+# Steps: install the shared librp1jtag0/librp1jtag-dev (and libpio) the
+# package builds against and depends on, from LIBS_DIR when build-libs.sh
+# already made them for this suite and architecture (debs.yml) or by running
+# build-libs.sh first (a one-off or CI build); fetch the pinned upstream and
+# apply the patch series (fpgatools); render debian/ (fpgatools debianize);
+# dpkg-buildpackage; then install the result and run the binary once so a
+# broken package fails here and not on a Pi.
 set -eu
 
 tool=$1
 track=$2
 REPO=${REPO:-/work}
 OUT=${OUT:-$REPO/built-debs}
-RP1JTAG_PREFIX=${RP1JTAG_PREFIX:-/usr/local}
+SUITE=${SUITE:?set SUITE to the Debian suite being built for}
+LIBS_DIR=${LIBS_DIR:-}
 export DEBIAN_FRONTEND=noninteractive
+export REPO SUITE
+. "$REPO/packaging/libpio.sh"
 
 apt-get update -q
 apt-get install -y -q --no-install-recommends \
@@ -34,13 +40,19 @@ fpgatools() { PYTHONPATH="$REPO" python3 -m fpgatools "$@"; }
 version=$(fpgatools version "$tool" "$track")
 echo "==> $tool/$track $version"
 
-fpgatools fetch piolib
-fpgatools fetch rp1jtag
+if [ -n "$LIBS_DIR" ]; then
+	ls "$LIBS_DIR"/librp1jtag-dev_*.deb > /dev/null \
+		|| { echo "build-deb: no librp1jtag-dev in LIBS_DIR=$LIBS_DIR" >&2; exit 1; }
+	libpio_from_rpi "$SUITE" && rpi_archive_add "$SUITE"
+	apt-get install -y -q "$LIBS_DIR"/*.deb
+else
+	packaging/build-libs.sh
+fi
+
 fpgatools apply "$tool" "$track"
 src=$REPO/build/src/$tool-$track
 echo "==> patched tree at $src"
 
-packaging/build-rp1jtag.sh build/src/piolib build/src/rp1jtag "$RP1JTAG_PREFIX"
 [ "$tool" = openocd ] && packaging/fetch-jimtcl.sh "$src"
 
 fpgatools debianize "$tool" "$track"
@@ -48,23 +60,38 @@ fpgatools debianize "$tool" "$track"
 # Build-Depends from the rendered control file, nothing duplicated here.
 cd "$src"
 apt-get build-dep -y -q ./
-RP1JTAG_PREFIX=$RP1JTAG_PREFIX FPGATOOLS_REPO=$REPO dpkg-buildpackage -us -uc -b
+# The source and binary package share one name (debian/changelog has it).
+# dpkg-buildpackage writes into build/src/, which every tool/track shares,
+# so only this package's files are cleared, copied and installed.
+pkg=$(dpkg-parsechangelog -S Source)
+rm -f ../"${pkg}"_*.deb ../"${pkg}"-dbgsym_*.deb
+FPGATOOLS_REPO=$REPO dpkg-buildpackage -us -uc -b
 
 mkdir -p "$OUT"
-cp ../*.deb "$OUT/"
+cp ../"${pkg}"_*.deb ../"${pkg}"-dbgsym_*.deb "$OUT/"
 ls -l "$OUT"
 
-# Install what was just built and run it: the package must be usable on a
-# clean system, with only Debian's own libraries alongside.
-apt-get install -y -q ../*.deb
+# Install what was just built and run it: the package must be usable with
+# only Debian's libraries, librp1jtag0 and libpio0 alongside.
+apt-get install -y -q ../"${pkg}"_*.deb
 case $tool in
 openfpgaloader)
+	bin=$(command -v openFPGALoader)
 	openFPGALoader --Version
 	openFPGALoader --list-cables | grep -E 'rp1pio|libgpiod|tt_micropython'
 	;;
 openocd)
+	bin=$(command -v openocd)
 	openocd -v
 	test -f /usr/share/openocd/scripts/board/netv2-rpi.cfg
 	;;
 esac
+# The rp1pio driver must reach librp1jtag through the shared library the
+# package depends on, not a copy linked in.
+ldd "$bin" | tee "$OUT/ldd-$tool-$track.txt"
+grep -q 'librp1jtag\.so\.0 => /' "$OUT/ldd-$tool-$track.txt" \
+	|| { echo "build-deb: $bin does not load the shared librp1jtag.so.0" >&2; exit 1; }
+rm "$OUT/ldd-$tool-$track.txt"
+dpkg-query -W -f '${Depends}\n' "$pkg" | grep -q 'librp1jtag0 (>= ' \
+	|| { echo "build-deb: $pkg does not depend on librp1jtag0" >&2; exit 1; }
 echo "==> $tool/$track $version OK"

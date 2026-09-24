@@ -1,0 +1,56 @@
+#!/usr/bin/make -f
+# debhelper rules for the fpgas.online librp1jtag0 build. Rendered from
+# packaging/debian/rp1jtag/ by `fpgatools debianize rp1jtag`.
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/architecture.mk
+include /usr/share/dpkg/buildflags.mk
+include /usr/share/dpkg/pkg-info.mk
+
+# The shared library exports the rp1_jtag_* API and nothing else. Built
+# as-is it also exported PIOLib's pio_* functions (it used to carry a private
+# copy) and rp1-jtag's own pio_backend_* internals, which then competed with
+# libpio.so.0's definitions depending on link order. --no-undefined makes a
+# PIOLib function the system libpio0 lacks a build failure here, not a
+# symbol-lookup error on a Pi. Only the shared library gets these: the
+# static archive, which rp1-jtag's own tests link, is not installed.
+SHARED_LDFLAGS = $(LDFLAGS) -Wl,--no-undefined \
+	-Wl,--version-script=$(CURDIR)/debian/librp1jtag.map
+
+LIBDIR = debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)
+
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_SHARED_LINKER_FLAGS="$(SHARED_LDFLAGS)"
+
+# dh_auto_test runs rp1-jtag's ctest suite: the unit tests (mock backend)
+# and the PIO simulator tests, none of which need hardware.
+
+override_dh_auto_install:
+	dh_auto_install
+	set -e; so=$$(readlink -f $(LIBDIR)/librp1jtag.so.0); \
+	echo "checking $$so"; \
+	readelf -d $$so | tee debian/dynamic.txt; \
+	grep -q 'NEEDED.*\[libpio\.so\.0\]' debian/dynamic.txt \
+		|| { echo "ERROR: librp1jtag does not link the shared libpio.so.0" >&2; exit 1; }; \
+	if strings $$so | grep -q "compiled without PIOLib support"; then \
+		echo "ERROR: librp1jtag was built without PIOLib (stub backend)" >&2; exit 1; \
+	fi; \
+	nm -D --defined-only $$so | awk '$$2 ~ /^[TDBRVW]$$/ {print $$3}' | sort > debian/exports.txt; \
+	cat debian/exports.txt; \
+	test -s debian/exports.txt || { echo "ERROR: librp1jtag exports nothing" >&2; exit 1; }; \
+	if grep -v '^rp1_jtag_' debian/exports.txt; then \
+		echo "ERROR: librp1jtag exports symbols outside rp1_jtag_* (above)" >&2; exit 1; \
+	fi; \
+	for sym in rp1_jtag_init rp1_jtag_close rp1_jtag_shift rp1_jtag_set_freq; do \
+		grep -qx $$sym debian/exports.txt || { echo "ERROR: $$sym not exported" >&2; exit 1; }; \
+	done
+
+# The tools are built and published with the library at the same revision;
+# depending on at least that revision keeps apt from pairing a new tool with
+# an old librp1jtag0 (the rp1-jtag API is pre-1.0 and has no symbols file).
+override_dh_makeshlibs:
+	dh_makeshlibs -V 'librp1jtag0 (>= $(DEB_VERSION))'

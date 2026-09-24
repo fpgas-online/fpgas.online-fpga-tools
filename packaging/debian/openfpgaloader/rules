@@ -3,10 +3,10 @@
 # packaging/debian/openfpgaloader/ by `fpgatools debianize`; @TOOL_VERSION@
 # is the string --Version must print.
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
-
-# librp1jtag and piolib are installed (static only) under this prefix by
-# packaging/build-rp1jtag.sh before dpkg-buildpackage runs.
-RP1JTAG_PREFIX ?= /usr/local
+# The rp1pio cable links librp1jtag0 (found through rp1jtag.pc). The series
+# also links libpio when it finds one, for a static librp1jtag; against the
+# shared library nothing references it, and --as-needed drops it.
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
 
 %:
 	dh $@ --buildsystem=cmake
@@ -14,7 +14,6 @@ RP1JTAG_PREFIX ?= /usr/local
 override_dh_auto_configure:
 	dh_auto_configure -- \
 		-DCMAKE_BUILD_TYPE=Release \
-		-DCMAKE_PREFIX_PATH=$(RP1JTAG_PREFIX) \
 		-DENABLE_CABLE_ALL=ON \
 		-DENABLE_VENDORS_ALL=ON \
 		-DENABLE_LIBGPIOD=ON \

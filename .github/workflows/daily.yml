@@ -25,10 +25,19 @@ name: Daily upstream bump
 # push made with GITHUB_TOKEN does not start workflow runs, by design, to
 # stop workflows triggering themselves. workflow_dispatch through the API is
 # the supported way back in.
+#
+# repository_dispatch (event type rp1jtag-updated) runs the same bump on
+# demand: mithro/rp1-jtag sends it when its main moves, so a librp1jtag
+# change reaches the packages the same day instead of at the next 05:23.
+# Sending it needs a token with access to this repository, held by the
+# sender; without one nothing is sent and the daily run still picks the
+# change up.
 on:
   schedule:
     - cron: "23 5 * * *" # daily 05:23 UTC
   workflow_dispatch:
+  repository_dispatch:
+    types: [rp1jtag-updated]
 
 permissions:
   contents: read

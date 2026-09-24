@@ -5,50 +5,64 @@ import pytest
 from fpgatools import REPO, pins
 from fpgatools.cli import FpgatoolsError
 
+from .conftest import FIXTURE_PINS
+
 OFL_STABLE = "85be4fa02b2dd6a83716d7dfac3d25bbd260ff7b"
 OCD_MASTER = "b04ccfeff73fb01b62e52e3d95882e8ff426016d"
 
 
 @pytest.fixture(scope="module")
-def real_pins() -> pins.Pins:
-    return pins.load()
+def fixture_pins() -> pins.Pins:
+    return pins.load(FIXTURE_PINS)
 
 
-def test_load_default_path_is_repo_upstreams_toml(real_pins):
-    assert pins.load(REPO / "upstreams.toml") == real_pins
+def test_load_default_path_is_repo_upstreams_toml():
+    assert pins.load() == pins.load(REPO / "upstreams.toml")
 
 
-def test_names_in_file_order(real_pins):
-    assert real_pins.names == ("openfpgaloader", "openocd", "rp1jtag", "piolib")
+def test_real_pins_have_what_the_versions_need():
+    """The real file, whatever the daily bump has moved it to."""
+    real = pins.load()
+    assert real.names == ("openfpgaloader", "openocd", "rp1jtag", "piolib")
+    for tool in ("openfpgaloader", "openocd"):
+        assert real.pin(tool, "master").describe is not None
+        assert real.pin(tool, "stable").ref.startswith("v")
+    assert real.pin("rp1jtag").describe is not None
+    assert real.pin("piolib").date is not None
 
 
-def test_url_and_tool(real_pins):
-    assert real_pins.url("openfpgaloader") == "https://github.com/trabucayre/openFPGALoader.git"
-    assert real_pins.tool("openocd") == pins.Upstream(
+def test_names_in_file_order(fixture_pins):
+    assert fixture_pins.names == ("openfpgaloader", "openocd", "rp1jtag", "piolib")
+
+
+def test_url_and_tool(fixture_pins):
+    assert fixture_pins.url("openfpgaloader") == "https://github.com/trabucayre/openFPGALoader.git"
+    assert fixture_pins.tool("openocd") == pins.Upstream(
         url="https://github.com/openocd-org/openocd.git"
     )
 
 
-def test_tracked_pins(real_pins):
-    stable = real_pins.pin("openfpgaloader", "stable")
+def test_tracked_pins(fixture_pins):
+    stable = fixture_pins.pin("openfpgaloader", "stable")
     assert stable == pins.Pin(ref="v1.1.1", commit=OFL_STABLE)
     assert stable.describe is None and stable.date is None and stable.subdir is None
 
-    master = real_pins.pin("openocd", "master")
+    master = fixture_pins.pin("openocd", "master")
     assert master.ref == "master"
     assert master.commit == OCD_MASTER
     assert master.describe == "v0.12.0-1701-gb04ccfef"
     assert master.date == "2026-09-20"
 
 
-def test_untracked_pins(real_pins):
-    rp1 = real_pins.pin("rp1jtag")
+def test_untracked_pins(fixture_pins):
+    rp1 = fixture_pins.pin("rp1jtag")
     assert rp1.ref == "main"
-    assert rp1.commit == "d9d7d8d186f103bb16a3eafb9c7296d5e2a33c47"
+    assert rp1.commit == "f91dfc702a433e115dcc2ced5accf176b1f189fc"
+    assert rp1.describe == "v0.0-95-gf91dfc7" and rp1.date is None
     assert rp1.subdir is None
-    assert real_pins.pin("piolib").subdir == "piolib"
-    assert real_pins.tracked("openocd") is True
-    assert real_pins.tracked("piolib") is False
+    assert fixture_pins.pin("piolib").subdir == "piolib"
+    assert fixture_pins.tracked("openocd") is True
+    assert fixture_pins.tracked("piolib") is False
 
 
 @pytest.mark.parametrize(
@@ -60,14 +74,14 @@ def test_untracked_pins(real_pins):
         ("rp1jtag", "stable", "has no tracks"),
     ],
 )
-def test_pin_errors(real_pins, name, track, fragment):
+def test_pin_errors(fixture_pins, name, track, fragment):
     with pytest.raises(FpgatoolsError, match=fragment):
-        real_pins.pin(name, track)
+        fixture_pins.pin(name, track)
 
 
-def test_url_unknown_name(real_pins):
+def test_url_unknown_name(fixture_pins):
     with pytest.raises(FpgatoolsError, match="unknown upstream 'nope'"):
-        real_pins.url("nope")
+        fixture_pins.url("nope")
 
 
 def test_load_from_string_and_missing_fields(tmp_path):
