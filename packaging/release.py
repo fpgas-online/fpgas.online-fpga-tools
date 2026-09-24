@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Upload static build assets to the current series' rolling GitHub Release.
+"""Upload build assets to the series' rolling GitHub Release or to the build's own.
 
     uv run python packaging/release.py --assets built-static [--series vX.Y] [--dry-run]
-    uv run python packaging/release.py --assets dbgsym --no-index
+    uv run python packaging/release.py --assets <dir> --build-release [--dry-run]
 
 The release hangs off the nearest vX.Y series tag (the repo's tag ruleset only
 admits that shape; v0.0 sits on the root commit) and is created as a
@@ -12,11 +12,16 @@ collide and are uploaded once; only latest.json is replaced on every run. It
 maps track -> tool -> arch -> {asset, version} so scripts can find the newest
 build without parsing the release page.
 
-The large -dbgsym Debian packages (debs.yml keeps those over 10 MB out of the
-apt repository) are uploaded here too, named <suite>_<file>.deb because every
-suite's build produces the same Debian filename. They are not in latest.json,
-and debs.yml passes --no-index so its run never replaces the latest.json
-static.yml writes.
+--build-release uploads instead to the release of this build alone, tagged
+build-<repo version> (build-0.0.post62) at HEAD and created if missing: every
+Debian package of the build, debug symbols included, and the static
+tarballs, so each build is complete in one place (a release holds at most
+1000 assets; the rolling series release would fill up). The .debs are named
+<suite>_<file>.deb because every suite's build produces the same Debian
+filename. debs.yml and static.yml both upload to it, whichever finishes
+first creating it, and neither touches latest.json there. The tag must not
+start with v<digit>: repo_version()'s git describe would take it for a
+series tag.
 """
 
 from __future__ import annotations
@@ -36,7 +41,8 @@ ASSET_RE = re.compile(
     r"\.tar\.gz)(?P<sha>\.sha256)?$"
 )
 TOOL_KEY = {"openFPGALoader": "openfpgaloader", "openocd": "openocd"}
-DBGSYM_RE = re.compile(r"^[a-z]+(?:-[a-z]+)*_[a-z0-9][a-z0-9.+-]*-dbgsym_[^_/]+_[a-z0-9]+\.deb$")
+# <suite>_<package>_<version>_<arch>.deb: a Debian filename behind its suite.
+DEB_RE = re.compile(r"^[a-z]+(?:-[a-z]+)*_[a-z0-9][a-z0-9.+-]*_[^_/]+_[a-z0-9]+\.deb$")
 # The upstream part of a master-track version: `1.1.1.post173` (always with
 # .postN, see fpgatools/version.py), or `1.1.1+git20260915.24e46d1` on assets
 # published before versions followed git describe.
@@ -75,8 +81,8 @@ def version_key(version: str) -> tuple:
 
 
 def is_asset(name: str) -> bool:
-    """A file this script uploads: a build tarball, its .sha256, or a suite-named -dbgsym .deb."""
-    return bool(classify(name.removesuffix(".sha256")) or DBGSYM_RE.match(name))
+    """A file this script uploads: a build tarball, its .sha256, or a suite-named .deb."""
+    return bool(classify(name.removesuffix(".sha256")) or DEB_RE.match(name))
 
 
 def latest_index(names: list[str]) -> dict:
@@ -128,18 +134,38 @@ def series_tag() -> str:
     return tag
 
 
-def ensure_release(tag: str, dry_run: bool) -> None:
-    if subprocess.run(["gh", "release", "view", tag], capture_output=True).returncode == 0:
+SERIES_NOTES = (
+    "Rolling builds of the fpgas.online openFPGALoader and OpenOCD: one set of static "
+    "binaries per green commit on main, named by package version. latest.json maps "
+    "track -> tool -> arch to the newest asset. Each build's complete set, Debian packages "
+    "included, is its own build-<version> release.")
+BUILD_NOTES = (
+    "Everything build {version} of fpgas.online openFPGALoader and OpenOCD produced: the "
+    "Debian packages for every suite and architecture, named <suite>_<file>.deb and debug "
+    "symbols included, and the static binaries. The apt repository at "
+    "https://fpgas.online/fpgas.online-fpga-tools/ is an easier way to install the same "
+    "packages (it leaves out -dbgsym packages over 10 MB).")
+
+
+def build_tag() -> str:
+    from fpgatools.version import repo_version
+    return f"build-{repo_version()}"
+
+
+def ensure_release(tag: str, title: str, notes: str, dry_run: bool, target: str = "") -> None:
+    view = ["gh", "release", "view", tag]
+    if subprocess.run(view, capture_output=True).returncode == 0:
         return
     print(f"creating prerelease {tag}")
-    if not dry_run:
-        sh("gh", "release", "create", tag, "--prerelease",
-           "--title", f"Static binaries and packages (rolling, series {tag})",
-           "--notes", "Rolling builds of the fpgas.online openFPGALoader and OpenOCD: one set of "
-           "assets per green commit on main, named by package version. latest.json maps "
-           "track -> tool -> arch to the newest asset. Debian packages are published to the "
-           "apt repository on GitHub Pages; only the -dbgsym packages too large for it "
-           "(over 10 MB) are here, named <suite>_<file>.deb.")
+    if dry_run:
+        return
+    create = ["gh", "release", "create", tag, "--prerelease", "--title", title, "--notes", notes]
+    if target:
+        create += ["--target", target]
+    r = subprocess.run(create, capture_output=True, text=True)
+    # debs.yml and static.yml both create a build's release; one of them loses.
+    if r.returncode != 0 and subprocess.run(view, capture_output=True).returncode != 0:
+        sys.exit(f"{' '.join(create)}\n{r.stderr.strip()}")
 
 
 def existing_assets(tag: str) -> list[str]:
@@ -153,19 +179,23 @@ def main() -> int:
     ap.add_argument("--assets", required=True, help="directory of built assets to upload")
     ap.add_argument("--series", help="series tag (default: nearest vX.Y tag)")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--no-index", action="store_true",
-                    help="upload only; leave latest.json alone (and allow nothing to upload)")
+    ap.add_argument("--build-release", action="store_true",
+                    help="upload to this build's own build-<version> release; no latest.json")
     args = ap.parse_args()
 
     assets_dir = Path(args.assets)
     local = collect_assets(assets_dir)
     if not local:
-        if args.no_index:
-            print(f"nothing to upload under {assets_dir}")
-            return 0
         sys.exit(f"no build assets under {assets_dir}")
-    tag = args.series or series_tag()
-    ensure_release(tag, args.dry_run)
+    if args.build_release:
+        tag = build_tag()
+        version = tag.removeprefix("build-")
+        ensure_release(tag, f"Build {version}", BUILD_NOTES.format(version=version),
+                       args.dry_run, target=sh("git", "rev-parse", "HEAD").strip())
+    else:
+        tag = args.series or series_tag()
+        ensure_release(tag, f"Static binaries and packages (rolling, series {tag})",
+                       SERIES_NOTES, args.dry_run)
     have = set(existing_assets(tag)) if not args.dry_run else set()
 
     to_upload = [p for p in local if p.name not in have]
@@ -177,7 +207,7 @@ def main() -> int:
     if skipped:
         print(f"already present, skipped: {len(skipped)}")
 
-    if args.no_index:
+    if args.build_release:
         return 0
     names = sorted(have | {p.name for p in local})
     index = {"series": tag, "latest": latest_index(names)}
