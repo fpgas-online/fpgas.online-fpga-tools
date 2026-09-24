@@ -6,7 +6,7 @@ import pytest
 from fpgatools import REPO, bump
 from fpgatools.cli import FpgatoolsError
 from fpgatools.pins import Pin, load
-from tests.conftest import git
+from tests.conftest import FIXTURE_PINS, git
 
 
 def test_describe_skips_release_candidates(tmp_path: Path):
@@ -78,7 +78,7 @@ def test_rewrite_pins_missing_table_or_line():
 
 
 def test_markdown_report():
-    pins = load()
+    pins = load(FIXTURE_PINS)
     r = bump.BumpReport(updates=[_update(pins, "openocd", "master", commit="e" * 40,
                                          describe="v0.12.0-1800-geeeeeee", date="2026-10-05")])
     r.applied[("openocd", "master")] = "OK"

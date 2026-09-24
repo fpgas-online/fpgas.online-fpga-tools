@@ -6,12 +6,14 @@ from fpgatools import debianize
 from fpgatools.cli import FpgatoolsError
 from fpgatools.pins import load
 
+from .conftest import FIXTURE_PINS
+
 DATE = "Tue, 22 Sep 2026 10:00:00 +0930"
 
 
 @pytest.fixture
 def pins():
-    return load()
+    return load(FIXTURE_PINS)
 
 
 def test_package_names():
