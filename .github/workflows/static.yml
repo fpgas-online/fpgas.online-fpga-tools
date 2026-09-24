@@ -111,3 +111,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: uv run python packaging/release.py --assets assets
+      # The same tarballs on this build's own release, next to debs.yml's
+      # Debian packages, so each build is complete in one place.
+      - name: Upload to the build's release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python packaging/release.py --assets assets --build-release

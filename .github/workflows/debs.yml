@@ -10,9 +10,11 @@ name: Debian packages + apt repository
 #   deb [signed-by=/etc/apt/keyrings/fpgas.online-fpga-tools.gpg] \
 #       https://fpgas.online/fpgas.online-fpga-tools/<suite>/ ./
 #
-# -dbgsym packages over 10 MB (openFPGALoader's, ~20 MB each; they were 79% of
-# the repository) go to the series' GitHub Release instead, as
-# <suite>_<file>.deb, so the Pages site has room to keep earlier versions.
+# Every package of a build, debug symbols included, is also on that build's
+# own GitHub Release (build-<repo version>, with static.yml's binaries), as
+# <suite>_<file>.deb; the apt repository is the easy way to install them. It
+# leaves out -dbgsym packages over 10 MB (openFPGALoader's, ~20 MB each; they
+# were 79% of it), so the Pages site has room to keep earlier versions.
 #
 # Pull requests build everything and publish nothing.
 #
@@ -118,20 +120,17 @@ jobs:
             "debian:${{ matrix.suite }}" \
             sh -ec 'packaging/build-deb.sh ${{ matrix.tool }} ${{ matrix.track }}'
 
-      # Debug symbols over 10 MB go to the GitHub Release, not the apt
-      # repository (see the top of this file). Every suite's build names its
-      # .deb the same, so the suite is prefixed. built-debs/ is root's (the
-      # build ran in a container), hence sudo.
+      # Debug symbols over 10 MB stay out of the apt repository (see the top
+      # of this file); the release job still publishes them. built-debs/ is
+      # root's (the build ran in a container), hence sudo.
       - name: Set aside debug symbols too large for the apt repository
-        env:
-          SUITE: ${{ matrix.suite }}
         run: |
           set -eu
           mkdir -p built-dbgsym
           for f in built-debs/*-dbgsym_*.deb; do
             [ -e "$f" ] || continue
             if [ "$(stat -c %s "$f")" -gt 10000000 ]; then
-              sudo mv -v "$f" "built-dbgsym/${SUITE}_$(basename "$f")"
+              sudo mv -v "$f" built-dbgsym/
             fi
           done
 
@@ -150,27 +149,62 @@ jobs:
           path: built-dbgsym/*.deb
           if-no-files-found: ignore
 
-  release-dbgsym:
-    name: large debug symbols to the series release
+  release:
+    name: every package to the build's release
     if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: build
+    needs: [libs, build]
     runs-on: ubuntu-latest
     permissions:
-      contents: write # upload release assets
+      contents: write # create the build's release and upload assets
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # release.py finds the series tag with git describe
+          fetch-depth: 0 # the build's version comes from git describe
       - uses: astral-sh/setup-uv@v6
+      - run: uv sync --quiet
+      # One directory per artifact: debs-* (what the apt repository gets,
+      # the shared libraries included) and dbgsym-* (what it leaves out).
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: debs-*
+          path: artifacts/
       - uses: actions/download-artifact@v4
         with:
           pattern: dbgsym-*
-          path: dbgsym/
-      # --no-index: latest.json is static.yml's, and runs concurrently.
-      - name: Upload to the series release
+          path: artifacts/
+      # Every suite's build names its .deb the same; the artifact name says
+      # which suite (the longest one it starts with, as in publish-apt).
+      - name: Name each package by its suite
+        env:
+          SUITES: bookworm trixie sid
+        run: |
+          set -eu
+          mkdir release
+          for d in artifacts/*/; do
+            name=$(basename "$d")
+            rest=${name#*-}
+            suite=""
+            for s in $SUITES; do
+              if [[ "$rest" == "$s-"* && ${#s} -gt ${#suite} ]]; then suite=$s; fi
+            done
+            if [ -z "$suite" ]; then
+              echo "::error::artifact $name names no suite in '$SUITES'"
+              exit 1
+            fi
+            for f in "$d"*.deb; do
+              out="release/${suite}_$(basename "$f")"
+              if [ -e "$out" ]; then
+                echo "::error::two builds produced $out"
+                exit 1
+              fi
+              cp "$f" "$out"
+            done
+          done
+          ls -l release/
+      - name: Upload to the build's release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: uv run python packaging/release.py --assets dbgsym --no-index
+        run: uv run python packaging/release.py --assets release --build-release
 
   publish:
     # Scoped to this job alone: a job calling a reusable workflow sets the
