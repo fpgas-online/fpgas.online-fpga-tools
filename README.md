@@ -113,7 +113,18 @@ page, on the rolling release of the current series, named by version:
   `OPENOCD_SCRIPTS=<dir>/share/openocd/scripts bin/openocd ...` or with `-s`.
 - `latest.json`: `{"series": "vX.Y", "latest": {track: {tool: {arch: {asset, version}}}}}` for scripts.
 
-Every asset has a `.sha256` beside it.
+Every tarball has a `.sha256` beside it.
+
+### Everything a build produced
+
+Each build on `main` also has its own release, `build-<version>` (for
+example `build-0.0.post62`), holding its complete output: the static
+tarballs above and every Debian package for every suite and architecture,
+named `<suite>_<package>_<version>_<arch>.deb`, debug symbols included. The
+apt repository is the easy way to install the same packages; it leaves out
+`-dbgsym` packages over 10 MB (openFPGALoader's, ~20 MB each) so the site has
+room to keep earlier versions. Install one of those with
+`apt install ./<file>.deb` next to the matching package version.
 
 The `libgpiod` backends (openFPGALoader's `-c libgpiod` cable, OpenOCD's
 `linuxgpiod` adapter) speak the kernel's GPIO character device, and the

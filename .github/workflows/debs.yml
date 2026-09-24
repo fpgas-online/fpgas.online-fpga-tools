@@ -7,8 +7,14 @@ name: Debian packages + apt repository
 # repository per suite to this repository's GitHub Pages through
 # mithro/apt-repo-action:
 #
-#   deb [signed-by=/etc/apt/keyrings/fpgas-online-fpga-tools.gpg] \
+#   deb [signed-by=/etc/apt/keyrings/fpgas.online-fpga-tools.gpg] \
 #       https://fpgas.online/fpgas.online-fpga-tools/<suite>/ ./
+#
+# Every package of a build, debug symbols included, is also on that build's
+# own GitHub Release (build-<repo version>, with static.yml's binaries), as
+# <suite>_<file>.deb; the apt repository is the easy way to install them. It
+# leaves out -dbgsym packages over 10 MB (openFPGALoader's, ~20 MB each; they
+# were 79% of it), so the Pages site has room to keep earlier versions.
 #
 # Pull requests build everything and publish nothing.
 #
@@ -114,14 +120,91 @@ jobs:
             "debian:${{ matrix.suite }}" \
             sh -ec 'packaging/build-deb.sh ${{ matrix.tool }} ${{ matrix.track }}'
 
-      # The publish workflow derives the suite from the text between "debs-"
-      # and the next dash, so anything after "debs-<suite>-<arch>" only keeps
+      # Debug symbols over 10 MB stay out of the apt repository (see the top
+      # of this file); the release job still publishes them. built-debs/ is
+      # root's (the build ran in a container), hence sudo.
+      - name: Set aside debug symbols too large for the apt repository
+        run: |
+          set -eu
+          mkdir -p built-dbgsym
+          for f in built-debs/*-dbgsym_*.deb; do
+            [ -e "$f" ] || continue
+            if [ "$(stat -c %s "$f")" -gt 10000000 ]; then
+              sudo mv -v "$f" built-dbgsym/
+            fi
+          done
+
+      # The publish workflow files each artifact under the longest suite its
+      # name starts with, so anything after "debs-<suite>-<arch>" only keeps
       # the artifact names distinct.
       - uses: actions/upload-artifact@v4
         with:
           name: debs-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
           path: built-debs/*.deb
           if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dbgsym-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
+          path: built-dbgsym/*.deb
+          if-no-files-found: ignore
+
+  release:
+    name: every package to the build's release
+    if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [libs, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the build's release and upload assets
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the build's version comes from git describe
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --quiet
+      # One directory per artifact: debs-* (what the apt repository gets,
+      # the shared libraries included) and dbgsym-* (what it leaves out).
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: debs-*
+          path: artifacts/
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dbgsym-*
+          path: artifacts/
+      # Every suite's build names its .deb the same; the artifact name says
+      # which suite (the longest one it starts with, as in publish-apt).
+      - name: Name each package by its suite
+        env:
+          SUITES: bookworm trixie sid
+        run: |
+          set -eu
+          mkdir release
+          for d in artifacts/*/; do
+            name=$(basename "$d")
+            rest=${name#*-}
+            suite=""
+            for s in $SUITES; do
+              if [[ "$rest" == "$s-"* && ${#s} -gt ${#suite} ]]; then suite=$s; fi
+            done
+            if [ -z "$suite" ]; then
+              echo "::error::artifact $name names no suite in '$SUITES'"
+              exit 1
+            fi
+            for f in "$d"*.deb; do
+              out="release/${suite}_$(basename "$f")"
+              if [ -e "$out" ]; then
+                echo "::error::two builds produced $out"
+                exit 1
+              fi
+              cp "$f" "$out"
+            done
+          done
+          ls -l release/
+      - name: Upload to the build's release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python packaging/release.py --assets release --build-release
 
   publish:
     # Scoped to this job alone: a job calling a reusable workflow sets the
@@ -133,14 +216,15 @@ jobs:
     if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: [libs, build]
     # Pinned by commit: this job hands the signing key to the called workflow.
-    # main was 207d875 on 2026-09-24; bump deliberately.
-    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@493f13bb3dc4b9c5cecfd95632c9f80d28786906
+    # main was ece43dd on 2026-09-24; bump deliberately.
+    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@ece43dd05997c5cc7f7852af084f319431147ca8
     with:
       suites: "bookworm trixie sid"
       architectures: "arm64 armhf"
       description: "fpgas.online builds of openFPGALoader and OpenOCD (RP1 PIO JTAG, NeTV2, Tiny Tapeout FPGA board, SPI flash info)"
       # Transitional: the key's old names, until every client has moved to
       # fpgas.online-fpga-tools.gpg (docs/conventions.md in mithro/apt-repo-action).
+      # Earlier versions are kept up to the default size-limit-mb (900).
       legacy-paths: "fpgas-online-fpga-tools.gpg fpgas-online-fpga-tools.asc"
     secrets:
       gpg-private-key: ${{ secrets.APT_GPG_PRIVATE_KEY }}
