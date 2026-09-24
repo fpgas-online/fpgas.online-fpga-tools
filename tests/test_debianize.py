@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -38,12 +39,12 @@ def test_siblings_conflict():
         ("openfpgaloader", "stable", "openfpgaloader-fpgasonline",
          "1.1.1+fpgasonline.0.0.post12", "v1.1.1+fpgasonline.0.0.post12"),
         ("openfpgaloader", "master", "openfpgaloader-fpgasonline-git",
-         "1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12",
-         "v1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12"),
+         "1.1.1.post173+fpgasonline.0.0.post12",
+         "v1.1.1.post173+fpgasonline.0.0.post12"),
         ("openocd", "stable", "openocd-fpgasonline",
          "0.12.0+fpgasonline.0.0.post12", "+fpgasonline.0.0.post12"),
         ("openocd", "master", "openocd-fpgasonline-git",
-         "0.12.0+git20260920.b04ccfe+fpgasonline.0.0.post12",
+         "0.12.0.post1701+fpgasonline.0.0.post12",
          "-01701-gb04ccfef+fpgasonline.0.0.post12"),
     ],
 )
@@ -97,13 +98,15 @@ def _lib_tree(tmp_path: Path, name: str) -> Path:
 
 
 @pytest.mark.parametrize(
-    "name,source,packages,version_prefix",
+    "name,source,packages,version_re",
     [
-        ("rp1jtag", "rp1-jtag-fpgasonline", ["librp1jtag0", "librp1jtag-dev"], "0.1.0+git"),
-        ("piolib", "piolib-fpgasonline", ["libpio0", "libpio-dev"], "20"),
+        ("rp1jtag", "rp1-jtag-fpgasonline", ["librp1jtag0", "librp1jtag-dev"],
+         r"0\.0\.post\d+\+fpgasonline\.0\.0\.post43"),
+        ("piolib", "piolib-fpgasonline", ["libpio0", "libpio-dev"],
+         r"20\d{6}\+fpgasonline\.0\.0\.post43\.g[0-9a-f]{7}"),
     ],
 )
-def test_render_library(tmp_path: Path, pins, name, source, packages, version_prefix):
+def test_render_library(tmp_path: Path, pins, name, source, packages, version_re):
     tree = _lib_tree(tmp_path, name)
     debian = debianize.render_library(name, pins, "0.0.post43", tree, date_rfc2822=DATE)
     control = (debian / "control").read_text()
@@ -116,9 +119,7 @@ def test_render_library(tmp_path: Path, pins, name, source, packages, version_pr
     assert (debian / "rules").stat().st_mode & 0o111
     assert (debian / "source" / "format").read_text() == "3.0 (native)\n"
     first = (debian / "changelog").read_text().splitlines()[0]
-    assert first.startswith(f"{source} ({version_prefix}")
-    assert "+fpgasonline.0.0.post43.g" in first
-    assert first.endswith(") unstable; urgency=medium")
+    assert re.fullmatch(rf"{source} \({version_re}\) unstable; urgency=medium", first), first
 
 
 def test_render_rp1jtag_exports_only_its_api(tmp_path: Path, pins):

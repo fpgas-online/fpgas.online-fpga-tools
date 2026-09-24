@@ -94,9 +94,9 @@ def test_parse_describe():
     ("tool", "track", "expected"),
     [
         ("openfpgaloader", "stable", "1.1.1+fpgasonline.0.0.post12"),
-        ("openfpgaloader", "master", "1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12"),
+        ("openfpgaloader", "master", "1.1.1.post173+fpgasonline.0.0.post12"),
         ("openocd", "stable", "0.12.0+fpgasonline.0.0.post12"),
-        ("openocd", "master", "0.12.0+git20260920.b04ccfe+fpgasonline.0.0.post12"),
+        ("openocd", "master", "0.12.0.post1701+fpgasonline.0.0.post12"),
     ],
 )
 def test_package_version(fixture_pins, tool, track, expected):
@@ -110,7 +110,7 @@ def test_package_version_rejects_unknown_tool_or_track(fixture_pins):
         version.package_version("openocd", "beta", fixture_pins, R)
 
 
-def test_package_version_master_needs_describe_and_date():
+def test_package_version_master_needs_describe():
     bare = pins.Pins.from_dict(
         {
             "openocd": {
@@ -131,7 +131,7 @@ def test_package_version_master_needs_describe_and_date():
     ("tool", "track", "expected"),
     [
         ("openfpgaloader", "stable", "v1.1.1+fpgasonline.0.0.post12"),
-        ("openfpgaloader", "master", "v1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12"),
+        ("openfpgaloader", "master", "v1.1.1.post173+fpgasonline.0.0.post12"),
         ("openocd", "stable", "+fpgasonline.0.0.post12"),
         ("openocd", "master", "-01701-gb04ccfef+fpgasonline.0.0.post12"),
     ],
@@ -166,51 +166,97 @@ def test_cli_version_errors(capsys):
         cli.main(["version", "openocd"])  # track missing
 
 
-def _rp1jtag_tree(tmp_path, cmake="project(rp1-jtag\n    VERSION 0.1.0\n    LANGUAGES C CXX\n)\n"):
-    tree = tmp_path / "rp1jtag"
-    tree.mkdir()
-    (tree / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.16)\n" + cmake)
-    return tree
-
-
-def test_library_version_rp1jtag(tmp_path, fixture_pins):
-    pin = fixture_pins.pin("rp1jtag")
-    date = pin.date.replace("-", "")
-    v = version.library_version("rp1jtag", fixture_pins, "0.0.post43", _rp1jtag_tree(tmp_path))
-    assert v == f"0.1.0+git{date}+fpgasonline.0.0.post43.g{pin.commit[:7]}"
-
-
-def test_library_version_rp1jtag_sorts_above_rp1_jtags_own_packages(tmp_path, fixture_pins):
-    """mithro/rp1-jtag published librp1jtag0 0.0.post87 under the same name."""
+def _dpkg_gt(a: str, b: str) -> bool:
     import shutil
     import subprocess
 
     if shutil.which("dpkg") is None:
         pytest.skip("needs dpkg --compare-versions")
-    v = version.library_version("rp1jtag", fixture_pins, "0.0", _rp1jtag_tree(tmp_path))
-    subprocess.run(["dpkg", "--compare-versions", v, "gt", "0.0.post87"], check=True)
+    return subprocess.run(["dpkg", "--compare-versions", a, "gt", b]).returncode == 0
 
 
-@pytest.mark.parametrize("name", ["rp1jtag", "piolib"])
-def test_library_version_orders_by_repo_version_not_sha(tmp_path, fixture_pins, name):
-    """Two bumps on one upstream date (daily.yml also runs per rp1-jtag push):
-    the later one, with a higher R, must sort higher whatever the shas are."""
+def _with_pin(name, track, **changes):
+    """The real pins with one pin's fields replaced."""
     import dataclasses
-    import shutil
-    import subprocess
 
-    if shutil.which("dpkg") is None:
-        pytest.skip("needs dpkg --compare-versions")
-    tree = _rp1jtag_tree(tmp_path)
+    real = pins.load(FIXTURE_PINS)
+    data = {}
+    for n in real.names:
+        entry = {"url": real.url(n)}
+        if real.tracked(n):
+            for t in ("stable", "master"):
+                pin = real.pin(n, t)
+                if (n, t) == (name, track):
+                    pin = dataclasses.replace(pin, **changes)
+                entry[t] = {k: v for k, v in dataclasses.asdict(pin).items() if v is not None}
+        else:
+            pin = real.pin(n)
+            if (n, None) == (name, track):
+                pin = dataclasses.replace(pin, **changes)
+            entry.update({k: v for k, v in dataclasses.asdict(pin).items() if v is not None})
+        data[n] = entry
+    return pins.Pins.from_dict(data)
 
-    def at(commit, r):
-        pin = dataclasses.replace(fixture_pins.pin(name), commit=commit)
-        p = pins.Pins.from_dict({name: {"url": "u", **dataclasses.asdict(pin)}})
-        return version.library_version(name, p, r, tree)
 
-    older = at("f" * 40, "0.0.post48")
-    newer = at("0" * 40, "0.0.post49")
-    subprocess.run(["dpkg", "--compare-versions", newer, "gt", older], check=True)
+def test_master_versions_upgrade_the_published_date_versions(fixture_pins):
+    """Before versions followed git describe, master builds were published as
+    <tag>+git<date>.<sha7>+fpgasonline.<R>; the describe versions replace them."""
+    assert _dpkg_gt(version.package_version("openocd", "master", fixture_pins, "0.0.post49"),
+                    "0.12.0+git20260920.b04ccfe+fpgasonline.0.0.post47")
+    assert _dpkg_gt(version.package_version("openfpgaloader", "master", fixture_pins, "0.0.post49"),
+                    "1.1.1+git20260915.24e46d1+fpgasonline.0.0.post48")
+
+
+def test_master_on_a_release_tag_still_says_post0():
+    """Master at a tag must not share the stable build's version (or asset name)."""
+    on_tag = _with_pin("openfpgaloader", "master", describe="v1.1.1-0-g85be4fa")
+    master = version.package_version("openfpgaloader", "master", on_tag, R)
+    assert master == f"1.1.1.post0+fpgasonline.{R}"
+    assert master != version.package_version("openfpgaloader", "stable", on_tag, R)
+    assert _dpkg_gt(master, version.package_version("openfpgaloader", "stable", on_tag, R))
+
+
+def test_master_orders_by_upstream_commit_count():
+    """Two bumps on one day: the later upstream commit has the larger count."""
+    older = _with_pin("openocd", "master", describe="v0.12.0-1701-gffffffff")
+    newer = _with_pin("openocd", "master", describe="v0.12.0-1702-g00000000")
+    assert _dpkg_gt(version.package_version("openocd", "master", newer, R),
+                    version.package_version("openocd", "master", older, R))
+
+
+# --- library_version ------------------------------------------------------------
+
+
+def test_library_version_rp1jtag(fixture_pins):
+    base, distance, _sha = version.parse_describe(fixture_pins.pin("rp1jtag").describe)
+    v = version.library_version("rp1jtag", fixture_pins, "0.0.post43")
+    assert v == f"{base}.post{distance}+fpgasonline.0.0.post43"
+
+
+def test_library_version_rp1jtag_on_a_tag():
+    on_tag = _with_pin("rp1jtag", None, describe="v0.1")
+    assert version.library_version("rp1jtag", on_tag, "0.0.post43") == "0.1+fpgasonline.0.0.post43"
+
+
+def test_library_version_rp1jtag_sorts_above_rp1_jtags_own_packages(fixture_pins):
+    """mithro/rp1-jtag published librp1jtag0 up to 0.0.post87 under the same name."""
+    assert _dpkg_gt(version.library_version("rp1jtag", fixture_pins, "0.0"), "0.0.post87")
+
+
+def test_library_version_rp1jtag_orders_by_upstream_commit_count():
+    older = _with_pin("rp1jtag", None, describe="v0.0-95-gfffffff")
+    newer = _with_pin("rp1jtag", None, describe="v0.0-96-g0000000")
+    assert _dpkg_gt(version.library_version("rp1jtag", newer, "0.0.post49"),
+                    version.library_version("rp1jtag", older, "0.0.post49"))
+
+
+def test_library_version_piolib_orders_by_repo_version_not_sha():
+    """Two bumps on one upstream date: the later one, with a higher R, must
+    sort higher whatever the shas are."""
+    older = _with_pin("piolib", None, commit="f" * 40)
+    newer = _with_pin("piolib", None, commit="0" * 40)
+    assert _dpkg_gt(version.library_version("piolib", newer, "0.0.post49"),
+                    version.library_version("piolib", older, "0.0.post48"))
 
 
 def test_library_version_piolib(fixture_pins):
@@ -220,16 +266,13 @@ def test_library_version_piolib(fixture_pins):
     assert v == f"{date}+fpgasonline.1.2.g{pin.commit[:7]}"
 
 
-def test_library_version_errors(tmp_path, fixture_pins):
+def test_library_version_errors():
+    real = pins.load(FIXTURE_PINS)
     with pytest.raises(FpgatoolsError, match="unknown library"):
-        version.library_version("gcc", fixture_pins, "0.0")
-    with pytest.raises(FpgatoolsError, match="source tree"):
-        version.library_version("rp1jtag", fixture_pins, "0.0")
-    with pytest.raises(FpgatoolsError, match="fetch rp1jtag"):
-        version.library_version("rp1jtag", fixture_pins, "0.0", tmp_path / "missing")
-    with pytest.raises(version.VersionError, match="VERSION"):
-        version.library_version("rp1jtag", fixture_pins, "0.0",
-                                _rp1jtag_tree(tmp_path, "project(rp1-jtag C)\n"))
-    undated = pins.Pins.from_dict({"piolib": {"url": "u", "ref": "master", "commit": "a" * 40}})
+        version.library_version("gcc", real, "0.0")
+    with pytest.raises(FpgatoolsError, match="needs describe"):
+        version.library_version("rp1jtag", _with_pin("rp1jtag", None, describe=None), "0.0")
+    with pytest.raises(version.VersionError):
+        version.library_version("rp1jtag", _with_pin("rp1jtag", None, describe="junk"), "0.0")
     with pytest.raises(FpgatoolsError, match="needs a date"):
-        version.library_version("piolib", undated, "0.0")
+        version.library_version("piolib", _with_pin("piolib", None, date=None), "0.0")

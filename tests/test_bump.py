@@ -90,6 +90,14 @@ def test_markdown_report():
     assert r.changed
 
 
+def test_markdown_report_library_pins():
+    pins = load(FIXTURE_PINS)
+    rp1 = _update(pins, "rp1jtag", None, commit="f" * 40, describe="v0.0-96-gfffffff")
+    pio = _update(pins, "piolib", None, commit="e" * 40, date="2026-10-05")
+    assert rp1.describe_change().endswith("-> fffffff (v0.0-96-gfffffff)")
+    assert pio.describe_change().endswith("-> eeeeeee (2026-10-05)")
+
+
 def test_bump_against_local_upstreams(tmp_path: Path):
     """End to end with file:// upstreams: pins move to the new head and tag."""
     up = tmp_path / "upstream"
@@ -114,6 +122,9 @@ def test_bump_against_local_upstreams(tmp_path: Path):
     (lib / "g").write_text("x\n")
     git(lib, "add", "g")
     git(lib, "commit", "-q", "-m", "lib")
+    git(lib, "tag", "-a", "v0.0", "-m", "v0.0")
+    (lib / "g").write_text("y\n")
+    git(lib, "commit", "-q", "-am", "lib two")
     libhead = git(lib, "rev-parse", "HEAD").strip()
     libdate = git(lib, "log", "-1", "--format=%cd", "--date=short").strip()
 
@@ -145,7 +156,7 @@ date = "2020-01-01"
 url = "file://{lib}"
 ref = "main"
 commit = "{'0' * 40}"
-date = "2020-01-01"
+describe = "v0.0"
 
 [piolib]
 url = "file://{lib}"
@@ -163,8 +174,11 @@ subdir = "piolib"
     v110 = git(up, "rev-parse", "v1.1.0^{commit}")
     assert data["openfpgaloader"]["stable"] == {"ref": "v1.1.0", "commit": v110}
     assert data["rp1jtag"]["commit"] == libhead
-    assert data["rp1jtag"]["date"] == libdate  # feeds the librp1jtag0 version
+    # each library pin keeps the one field its version uses
+    assert data["rp1jtag"]["describe"].startswith("v0.0-1-g")  # librp1jtag0 0.0.post1
+    assert "date" not in data["rp1jtag"]
     assert data["piolib"]["commit"] == libhead  # unchanged, still correct
+    assert data["piolib"]["date"] == libdate and "describe" not in data["piolib"]
     # a second run is a no-op
     report2 = bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
     assert not report2.changed

@@ -27,6 +27,7 @@ def test_real_pins_have_what_the_versions_need():
     for tool in ("openfpgaloader", "openocd"):
         assert real.pin(tool, "master").describe is not None
         assert real.pin(tool, "stable").ref.startswith("v")
+    assert real.pin("rp1jtag").describe is not None
     assert real.pin("piolib").date is not None
 
 
@@ -56,7 +57,8 @@ def test_tracked_pins(fixture_pins):
 def test_untracked_pins(fixture_pins):
     rp1 = fixture_pins.pin("rp1jtag")
     assert rp1.ref == "main"
-    assert rp1.commit == "d9d7d8d186f103bb16a3eafb9c7296d5e2a33c47"
+    assert rp1.commit == "f91dfc702a433e115dcc2ced5accf176b1f189fc"
+    assert rp1.describe == "v0.0-95-gf91dfc7" and rp1.date is None
     assert rp1.subdir is None
     assert fixture_pins.pin("piolib").subdir == "piolib"
     assert fixture_pins.tracked("openocd") is True

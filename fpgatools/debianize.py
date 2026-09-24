@@ -166,11 +166,11 @@ def render(
     return debian
 
 
-def library_substitutions(name: str, pins: Pins, repo_ver: str, tree: Path) -> dict[str, str]:
+def library_substitutions(name: str, pins: Pins, repo_ver: str) -> dict[str, str]:
     pin = pins.pin(name)
     return {
         "@SOURCE@": LIB_SOURCE[name],
-        "@VERSION@": library_version(name, pins, repo_ver, tree),
+        "@VERSION@": library_version(name, pins, repo_ver),
         "@UPSTREAM_URL@": pins.url(name),
         "@UPSTREAM_REF@": pin.ref,
         "@UPSTREAM_COMMIT@": pin.commit[:12],
@@ -197,7 +197,7 @@ def render_library(
     src = templates_root / name
     if not src.is_dir():
         raise FpgatoolsError(f"no debian templates for '{name}' under {templates_root}")
-    subs = library_substitutions(name, pins, repo_ver, dest)
+    subs = library_substitutions(name, pins, repo_ver)
     debian = dest / "debian"
     if debian.exists():
         shutil.rmtree(debian)
@@ -226,7 +226,7 @@ def _cmd(args: argparse.Namespace) -> int:
             )
         dest = Path(args.dest)
         debian = render_library(args.name, pins, repo_version(), dest)
-        version = library_version(args.name, pins, repo_version(), dest)
+        version = library_version(args.name, pins, repo_version())
         print(f"{debian}: {LIB_SOURCE[args.name]} {version}")
         return 0
     if args.track is None:

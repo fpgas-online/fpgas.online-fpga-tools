@@ -10,10 +10,12 @@
 # fpgatools fetches the commit hash directly, so a build is reproducible from
 # this file alone.
 #
-# describe/date on the master entries, and date on [rp1jtag]/[piolib], feed
-# the +git<date>.<sha7> part of the package versions (see fpgatools/version.py);
-# recording them here means the build does not need upstream history, only
-# the one commit.
+# `describe` on the master entries and on [rp1jtag] is the upstream part of
+# the package version (`v1.1.1-173-g24e46d1` -> `1.1.1.post173`; see
+# fpgatools/version.py); [piolib] is versioned by `date` instead, because
+# raspberrypi/utils has no tags. Recording them here means the build does not
+# need upstream history, only the one commit. `date` on the master entries is
+# informational (the bump PR shows it).
 
 [openfpgaloader]
 url = "https://github.com/trabucayre/openFPGALoader.git"
@@ -44,12 +46,13 @@ date = "2026-09-20"
 # librp1jtag: the RP1 PIO JTAG library both tools' rp1pio drivers call.
 # Packaged here as the shared librp1jtag0 / librp1jtag-dev the Debian tool
 # packages depend on; linked statically into the static release binaries.
-# `date` feeds the +git<date>.<sha7> part of the librp1jtag0 version.
+# `describe` gives the librp1jtag0 version (`v0.0-95-g...` -> `0.0.post95`),
+# continuing the 0.0.postN versions mithro/rp1-jtag published itself.
 [rp1jtag]
 url = "https://github.com/mithro/rp1-jtag.git"
 ref = "main"
-commit = "d9d7d8d186f103bb16a3eafb9c7296d5e2a33c47"
-date = "2026-09-18"
+commit = "f91dfc702a433e115dcc2ced5accf176b1f189fc"
+describe = "v0.0-95-gf91dfc7"
 
 # PIOLib from raspberrypi/utils: librp1jtag's /dev/pio0 backend. Debian
 # proper does not package it; Raspberry Pi's archive does (libpio0 and

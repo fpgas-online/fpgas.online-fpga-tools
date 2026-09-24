@@ -6,15 +6,21 @@ Nothing here is typed by hand (see CLAUDE.md "Versions are derived"):
   tags: `X.Y` on the tag, `X.Y.postN` N commits later, `0.0.post<count>`
   with no tag at all. This is the fpgas-online `deb-version.py` convention.
 * The package (Debian) version is `<upstream base>+fpgasonline.<R>` on the
-  stable track and `<upstream base>+git<YYYYMMDD>.<sha7>+fpgasonline.<R>` on
-  master, where the base, date and sha come from `upstreams.toml`.
+  stable track and `<upstream base>.post<N>+fpgasonline.<R>` on master,
+  where `<upstream base>.post<N>` is the upstream `git describe` recorded in
+  `upstreams.toml`: N commits after release tag `<upstream base>`. Master
+  always carries `.post<N>`, even at N=0, so a master build can never share a
+  version (or a static asset name) with the stable build of the same tag.
 * The string each patched binary reports is derived from the same parts.
-* The shared libraries are versioned the same way from their single pin:
-  librp1jtag0 `<rp1-jtag project VERSION>+git<YYYYMMDD>+fpgasonline.<R>.g<sha7>`
-  and our libpio0 (sid only) `<YYYYMMDD>+fpgasonline.<R>.g<sha7>`, the
-  date-first shape Raspberry Pi's own libpio0 versions use. R comes before
-  the sha: two pins with the same commit date must order by R, which rises
-  with every commit here, not by an arbitrary hash.
+* librp1jtag0 is versioned the same way from its pin's describe, in the
+  fpgas-online convention: `<tag>.post<N>+fpgasonline.<R>` (`<tag>` alone on
+  the tag itself), continuing the `0.0.postN` versions mithro/rp1-jtag
+  published under the same package name.
+* Our libpio0 (sid only; Raspberry Pi's archive has it everywhere else) is the
+  one date-versioned package: `<YYYYMMDD>+fpgasonline.<R>.g<sha7>`, the
+  date-first shape Raspberry Pi's own libpio0 uses. raspberrypi/utils has no
+  tags to describe against. R comes before the sha, so two pins with the same
+  commit date order by R, which rises with every commit here.
 """
 
 from __future__ import annotations
@@ -88,10 +94,9 @@ def _check(tool: str, track: str) -> None:
 
 
 def _master_parts(tool: str, pin: Pin) -> tuple[str, int, str]:
-    if pin.describe is None or pin.date is None:
+    if pin.describe is None:
         raise FpgatoolsError(
-            f"the {tool} master pin needs describe and date in upstreams.toml "
-            "(fpgatools bump records them)"
+            f"the {tool} master pin needs describe in upstreams.toml (fpgatools bump records it)"
         )
     base, distance, sha = parse_describe(pin.describe)
     if sha is None:
@@ -103,14 +108,13 @@ def _master_parts(tool: str, pin: Pin) -> tuple[str, int, str]:
 
 def package_version(tool: str, track: str, pins: Pins, repo_version: str) -> str:
     """The Debian version: `1.1.1+fpgasonline.0.0.post12` or
-    `1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12`."""
+    `1.1.1.post173+fpgasonline.0.0.post12`."""
     _check(tool, track)
     pin = pins.pin(tool, track)
     if track == "stable":
         return f"{upstream_base(pin)}+fpgasonline.{repo_version}"
-    base, _distance, _sha = _master_parts(tool, pin)
-    date = pin.date.replace("-", "")  # type: ignore[union-attr]  # checked in _master_parts
-    return f"{base}+git{date}.{pin.commit[:7]}+fpgasonline.{repo_version}"
+    base, distance, _sha = _master_parts(tool, pin)
+    return f"{base}.post{distance}+fpgasonline.{repo_version}"
 
 
 def tool_version_string(tool: str, track: str, pins: Pins, repo_version: str) -> str:
@@ -132,23 +136,6 @@ def tool_version_string(tool: str, track: str, pins: Pins, repo_version: str) ->
     return f"-{distance:05d}-g{sha}+fpgasonline.{repo_version}"
 
 
-# rp1-jtag declares its release in CMake: project(rp1-jtag VERSION 0.1.0 ...).
-_CMAKE_PROJECT_VERSION_RE = re.compile(
-    r"project\s*\(\s*rp1-jtag\b[^)]*?\bVERSION\s+(\d+(?:\.\d+)+)"
-)
-
-
-def rp1jtag_base(src: Path) -> str:
-    """The release rp1-jtag's CMakeLists.txt declares, from a fetched tree."""
-    cmake = src / "CMakeLists.txt"
-    if not cmake.is_file():
-        raise FpgatoolsError(f"{cmake} not found: run `fpgatools fetch rp1jtag`")
-    m = _CMAKE_PROJECT_VERSION_RE.search(cmake.read_text())
-    if not m:
-        raise VersionError(f"{cmake} has no project(rp1-jtag VERSION x.y.z)")
-    return m.group(1)
-
-
 def _pin_date(name: str, pin: Pin) -> str:
     if pin.date is None:
         raise FpgatoolsError(
@@ -157,27 +144,29 @@ def _pin_date(name: str, pin: Pin) -> str:
     return pin.date.replace("-", "")
 
 
-def library_version(name: str, pins: Pins, repo_version: str, src: Path | None = None) -> str:
+def library_version(name: str, pins: Pins, repo_version: str) -> str:
     """The Debian version of a packaged library.
 
-    librp1jtag0: `0.1.0+git20260918+fpgasonline.0.0.post43.gd9d7d8d`. The base
-    is rp1-jtag's own declared release, read from `src` (the fetched tree),
-    so the version sorts above the 0.0.postN packages mithro/rp1-jtag used
-    to publish under the same name.
+    librp1jtag0: `0.0.post95+fpgasonline.0.0.post49`, from the pin's
+    `git describe` (`v0.0-95-gf91dfc7`). It continues the 0.0.postN versions
+    mithro/rp1-jtag published under the same package name, and sorts above
+    them once the pin is past the last one it published (0.0.post87).
 
-    libpio0: `20260914+fpgasonline.0.0.post43.gebc4a56`. PIOLib has no
-    release number; Raspberry Pi version its package by date, and so do we.
+    libpio0: `20260914+fpgasonline.0.0.post49.gebc4a56`. raspberrypi/utils has
+    no tags; Raspberry Pi version their libpio0 by date, and so do we.
     """
     if name not in LIBS:
         raise FpgatoolsError(f"unknown library {name!r} (known: {', '.join(LIBS)})")
     pin = pins.pin(name)
-    date = _pin_date(name, pin)
-    sha = pin.commit[:7]
     if name == "rp1jtag":
-        if src is None:
-            raise FpgatoolsError("the rp1jtag version needs the fetched source tree")
-        return f"{rp1jtag_base(src)}+git{date}+fpgasonline.{repo_version}.g{sha}"
-    return f"{date}+fpgasonline.{repo_version}.g{sha}"
+        if pin.describe is None:
+            raise FpgatoolsError(
+                "the rp1jtag pin needs describe in upstreams.toml (fpgatools bump records it)"
+            )
+        base, distance, _sha = parse_describe(pin.describe)
+        upstream = base if distance == 0 else f"{base}.post{distance}"
+        return f"{upstream}+fpgasonline.{repo_version}"
+    return f"{_pin_date(name, pin)}+fpgasonline.{repo_version}.g{pin.commit[:7]}"
 
 
 # --- CLI ------------------------------------------------------------------------
