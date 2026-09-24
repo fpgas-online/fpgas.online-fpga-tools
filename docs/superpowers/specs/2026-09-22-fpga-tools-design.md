@@ -101,8 +101,10 @@ fpgas.online-fpga-tools/
   tests/                        pytest for the pure functions (version strings, series checks)
   .github/workflows/
     ci.yml                      lint + tests + apply-all-series + native amd64 compile check
-    debs.yml                    matrix build, publish to Pages (main only)
-    static.yml                  matrix static build, upload to the series release (main only)
+    build-debs.yml              deb matrix build (reusable, read-only token)
+    build-static.yml            static matrix build (reusable, read-only token)
+    debs.yml                    build-debs.yml, then publish to Pages (main only)
+    static.yml                  build-static.yml, then upload to the series release (main only)
     daily.yml                   daily pin bump, full verify, promote + publish
   docs/superpowers/specs/       this document
   build/                        (gitignored) upstream working trees
@@ -369,7 +371,7 @@ native amd64 **deb build** of each tool/track in `debian:trixie` through the
 same `packaging/build-deb.sh` the arm matrix uses (RP1 PIO on: librp1jtag
 compiles anywhere, it just has nothing to drive on amd64; with no
 `LIBS_DIR` the script builds librp1jtag0, and libpio0, first). PRs also run
-`debs.yml` and `static.yml` build jobs (publish jobs are main-only).
+`build-debs.yml` and `build-static.yml` through `debs.yml` and `static.yml` (publish jobs are main-only).
 `packaging/compile-check.sh` is the developer-side equivalent (configure,
 build, assert cables/adapters/version) without packaging.
 
@@ -393,29 +395,32 @@ The day then goes:
    When no pin moved the candidate is main's own commit, so the rest still
    runs: the daily rebuild catches base-image and toolchain rot, not only
    upstream changes.
-2. **verify** — the full deb matrix (24 jobs) and full static matrix (12)
-   against the candidate, by calling `debs.yml` and `static.yml` with a
-   `ref` input. A called workflow sees the *caller's* `github.event_name`
-   and `github.ref`, so both publish jobs gate on `inputs.ref == ''` rather
-   than on the event: a candidate build cannot publish.
-3. **promote** — only if every build passed and a pin moved: fast-forward
+2. **verify** — the full deb matrix (6 library + 24 tool jobs) and full
+   static matrix (12) against the candidate, by calling `build-debs.yml` and
+   `build-static.yml` with a `ref` input. Those contain no publish job at
+   all. Until 2026-09-24 daily.yml called `debs.yml`/`static.yml` and relied
+   on an `inputs.ref == ''` gate, but GitHub validates a called workflow's
+   permissions when the run is created, before any `if:`: their publish jobs
+   asked for `pages: write` / `contents: write` beyond this caller's
+   `contents: read`, and every run ended in `startup_failure` with no jobs.
+3. **promote** — only on main, and only if every build passed and a pin moved: fast-forward
    main to the candidate (refused, and the run goes red, if main moved
    meanwhile), then `gh workflow run` `debs.yml` and `static.yml` on main.
    Publishing therefore always comes from a run of main itself. The
    dispatch is needed because a push made with `GITHUB_TOKEN` does not
    start workflow runs.
-4. **report** — any failure opens, or comments on, a single open issue
+4. **report** — on main, any failure opens, or comments on, a single open issue
    titled "Daily upstream bump is red", carrying the bump report. The pins
    on main are untouched, so a red day publishes nothing.
 
 Cost: a bump day builds the matrix twice (verify, then main). That was the
 accepted trade for never publishing an unverified pin.
 
-The same workflow also runs on `repository_dispatch` of event type
-`rp1jtag-updated` (added 2026-09-23 with the shared librp1jtag0), so
-mithro/rp1-jtag can have a library change built, verified and published the
-same day. The sender needs a token with access to this repository; without
-one the daily run still picks the change up.
+mithro/rp1-jtag starts the same workflow with `workflow_dispatch` when its
+main moves (since rp1-jtag PR #23, 2026-09-24; the `repository_dispatch`
+trigger this repository briefly carried is gone), so a library change is
+built, verified and published the same day. A dispatch on any branch other
+than main verifies and stops: it neither promotes nor reports.
 
 ## 9. Tooling (`fpgatools`)
 

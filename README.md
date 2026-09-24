@@ -164,7 +164,8 @@ packaging/build-deb.sh    what the deb workflow runs inside debian:<suite>
 packaging/libpio.sh       which suites take libpio0 from Raspberry Pi's archive
 packaging/keys/           Raspberry Pi's archive keyring, for the build containers
 packaging/release.py      uploads static assets to the series release
-.github/workflows/        ci.yml, debs.yml, static.yml, daily.yml
+.github/workflows/        ci.yml, debs.yml, static.yml, daily.yml; the build matrices
+                          themselves are build-debs.yml and build-static.yml
 docs/superpowers/         design spec and implementation plan
 ```
 
@@ -229,11 +230,11 @@ fleet-wide read that must not see a tool change mid-way should avoid
 A series marked ❌ in the issue needs a rebase in a build tree, as above.
 `uv run fpgatools bump --dry-run` reproduces the report locally.
 
-The same run can also be started on demand by a `repository_dispatch` of
-event type `rp1jtag-updated`, which mithro/rp1-jtag sends when its main
-moves (it needs a token with access to this repository; without one the
-next daily run picks the change up anyway). The window above does not apply
-to those runs.
+mithro/rp1-jtag also starts the same run (`workflow_dispatch`) when its main
+moves, so a librp1jtag change is published the same day. The window above
+does not apply to those runs. Only a run on `main` promotes pins or opens the
+red-day issue; dispatching `daily.yml` on another branch builds and verifies
+the candidate and stops there.
 
 ## Publishing
 
