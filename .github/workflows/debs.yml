@@ -222,9 +222,6 @@ jobs:
       suites: "bookworm trixie sid"
       architectures: "arm64 armhf"
       description: "fpgas.online builds of openFPGALoader and OpenOCD (RP1 PIO JTAG, NeTV2, Tiny Tapeout FPGA board, SPI flash info)"
-      # Transitional: the key's old names, until every client has moved to
-      # fpgas.online-fpga-tools.gpg (docs/conventions.md in mithro/apt-repo-action).
       # Earlier versions are kept up to the default size-limit-mb (900).
-      legacy-paths: "fpgas-online-fpga-tools.gpg fpgas-online-fpga-tools.asc"
     secrets:
       gpg-private-key: ${{ secrets.APT_GPG_PRIVATE_KEY }}
