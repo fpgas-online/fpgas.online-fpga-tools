@@ -70,11 +70,11 @@ One flat apt repository per suite, signed with this repository's key.
 
 ```bash
 sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://fpgas.online/fpgas.online-fpga-tools/fpgas-online-fpga-tools.asc \
-  | sudo gpg --dearmor -o /etc/apt/keyrings/fpgas-online-fpga-tools.gpg
-echo "deb [signed-by=/etc/apt/keyrings/fpgas-online-fpga-tools.gpg] \
+curl -fsSL https://fpgas.online/fpgas.online-fpga-tools/fpgas.online-fpga-tools.gpg \
+  | sudo tee /etc/apt/keyrings/fpgas.online-fpga-tools.gpg > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/fpgas.online-fpga-tools.gpg] \
   https://fpgas.online/fpgas.online-fpga-tools/$(. /etc/os-release; echo $VERSION_CODENAME)/ ./" \
-  | sudo tee /etc/apt/sources.list.d/fpgas-online-fpga-tools.list
+  | sudo tee /etc/apt/sources.list.d/fpgas.online-fpga-tools.list
 sudo apt update
 sudo apt install openfpgaloader-fpgasonline openocd-fpgasonline   # or the -git pair
 ```
