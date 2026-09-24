@@ -1,0 +1,75 @@
+name: Build static binaries
+
+# The static build matrix, called by static.yml (which then uploads to the
+# release) and by daily.yml (which builds candidate pins and must never
+# upload). Read token only, for the reason build-debs.yml gives: a called
+# workflow asking for more than its caller grants fails the whole run at
+# startup.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Commit or branch to build (default: the caller's own ref)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.tool }}/${{ matrix.track }} static ${{ matrix.arch }}
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [openfpgaloader, openocd]
+        track: [stable, master]
+        arch: [arm64, armv7, armv6]
+        include:
+          - arch: arm64
+            image: alpine:3.21
+            platform: linux/arm64
+          - arch: armv7
+            image: arm32v7/alpine:3.21
+            platform: linux/arm/v7
+          - arch: armv6
+            image: arm32v6/alpine:3.21
+            platform: linux/arm/v6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # fpgatools version needs the series tags
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --quiet
+
+      - name: Fetch pinned upstreams and apply the series
+        run: |
+          uv run fpgatools fetch piolib
+          uv run fpgatools fetch rp1jtag
+          uv run fpgatools apply ${{ matrix.tool }} ${{ matrix.track }}
+
+      - name: Versions
+        id: ver
+        run: |
+          echo "version=$(uv run fpgatools version ${{ matrix.tool }} ${{ matrix.track }})" >> "$GITHUB_OUTPUT"
+          echo "local=$(uv run fpgatools version ${{ matrix.tool }} ${{ matrix.track }} --tool-string)" >> "$GITHUB_OUTPUT"
+
+      - name: Build in ${{ matrix.image }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          LOCAL: ${{ steps.ver.outputs.local }}
+        run: |
+          # NOTE: not `container: alpine`: JavaScript actions do not run in
+          # Alpine on the arm runners, so the build is a plain docker run.
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work \
+            "${{ matrix.image }}" \
+            sh -ec "packaging/static/${{ matrix.tool }}.sh ${{ matrix.track }} '$VERSION' '$LOCAL'"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: static-${{ matrix.tool }}-${{ matrix.track }}-${{ matrix.arch }}
+          path: built-static/*
+          if-no-files-found: error

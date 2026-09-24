@@ -8,10 +8,12 @@ name: Daily upstream bump
 #                 the auto/pin-candidate branch. When nothing moved, the
 #                 candidate is simply main's own commit, so the rest of the
 #                 run is still a full daily rebuild of what the fleet has.
-#   2. verify     the whole deb matrix (24 jobs) and the whole static matrix
-#                 (12 jobs) against the candidate. Passing `ref` tells those
-#                 workflows they are building a candidate, which disables
-#                 their publish jobs.
+#   2. verify     the whole deb matrix (6 library + 24 tool jobs) and the
+#                 whole static matrix (12 jobs) against the candidate, through
+#                 build-debs.yml and build-static.yml. Those hold a read token
+#                 and have no publish job at all: a called workflow that asks
+#                 for more permissions than this caller grants fails the whole
+#                 run at startup, before any job or `if:` runs.
 #   3. promote    only when every build passed and a pin actually moved:
 #                 fast-forward main to the candidate commit, then dispatch
 #                 debs.yml and static.yml on main, which build again and
@@ -26,18 +28,16 @@ name: Daily upstream bump
 # stop workflows triggering themselves. workflow_dispatch through the API is
 # the supported way back in.
 #
-# repository_dispatch (event type rp1jtag-updated) runs the same bump on
-# demand: mithro/rp1-jtag sends it when its main moves, so a librp1jtag
-# change reaches the packages the same day instead of at the next 05:23.
-# Sending it needs a token with access to this repository, held by the
-# sender; without one nothing is sent and the daily run still picks the
-# change up.
+# mithro/rp1-jtag dispatches this workflow (workflow_dispatch) when its main
+# moves, so a librp1jtag change reaches the packages the same day instead of
+# at the next 05:23.
+#
+# Only a run on main promotes or reports; a dispatch on another branch (to
+# test a change to this file) builds and verifies the candidate and stops.
 on:
   schedule:
     - cron: "23 5 * * *" # daily 05:23 UTC
   workflow_dispatch:
-  repository_dispatch:
-    types: [rp1jtag-updated]
 
 permissions:
   contents: read
@@ -105,21 +105,21 @@ jobs:
   verify-debs:
     name: verify debs
     needs: candidate
-    uses: ./.github/workflows/debs.yml
+    uses: ./.github/workflows/build-debs.yml
     with:
       ref: ${{ needs.candidate.outputs.ref }}
 
   verify-static:
     name: verify static
     needs: candidate
-    uses: ./.github/workflows/static.yml
+    uses: ./.github/workflows/build-static.yml
     with:
       ref: ${{ needs.candidate.outputs.ref }}
 
   promote:
     name: move the pins to main and publish
     needs: [candidate, verify-debs, verify-static]
-    if: needs.candidate.outputs.changed == 'true'
+    if: github.ref == 'refs/heads/main' && needs.candidate.outputs.changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write # fast-forwards main
@@ -154,7 +154,7 @@ jobs:
   report:
     name: report a red day
     needs: [candidate, verify-debs, verify-static, promote]
-    if: always() && contains(needs.*.result, 'failure')
+    if: always() && github.ref == 'refs/heads/main' && contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
     permissions:
       issues: write
