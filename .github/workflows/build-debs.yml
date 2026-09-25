@@ -9,7 +9,7 @@ name: Build Debian packages
 # can write.
 #
 # The artifacts it uploads belong to the calling run, where debs.yml's
-# publish job collects them.
+# release and publish jobs collect them.
 on:
   workflow_call:
     inputs:
@@ -92,6 +92,20 @@ jobs:
             "debian:${{ matrix.suite }}" \
             sh -ec 'packaging/build-deb.sh ${{ matrix.tool }} ${{ matrix.track }}'
 
+      # Debug symbols over 10 MB stay out of the apt repository (see the top
+      # of debs.yml); its release job still publishes them. built-debs/ is
+      # root's (the build ran in a container), hence sudo.
+      - name: Set aside debug symbols too large for the apt repository
+        run: |
+          set -eu
+          mkdir -p built-dbgsym
+          for f in built-debs/*-dbgsym_*.deb; do
+            [ -e "$f" ] || continue
+            if [ "$(stat -c %s "$f")" -gt 10000000 ]; then
+              sudo mv -v "$f" built-dbgsym/
+            fi
+          done
+
       # publish-apt takes the suite from the longest configured suite the name
       # starts with after "debs-"; anything after "debs-<suite>-<arch>" only
       # keeps the artifact names distinct.
@@ -100,3 +114,9 @@ jobs:
           name: debs-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
           path: built-debs/*.deb
           if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dbgsym-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
+          path: built-dbgsym/*.deb
+          if-no-files-found: ignore
