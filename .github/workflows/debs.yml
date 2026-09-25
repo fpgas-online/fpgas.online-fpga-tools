@@ -22,10 +22,8 @@ name: Debian packages + apt repository
 # (the RP1 PIO driver has nothing to drive elsewhere). bookworm is built as
 # well as trixie/sid because the fpgas.online Pi NFS root is still bookworm.
 #
-# daily.yml calls this workflow to build candidate upstream pins before they
-# reach main; such a call passes `ref` and must never publish. Note that a
-# called workflow sees the CALLER's github.event_name and github.ref, so the
-# publish gate keys on `ref` being empty, not on the event.
+# The builds are build-debs.yml, which daily.yml also calls for candidate
+# pins; only this workflow publishes.
 on:
   push:
     branches: [main]
@@ -33,126 +31,23 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Commit or branch to build (default: this workflow's own ref)"
-        type: string
-        default: ""
-  workflow_call:
-    inputs:
-      ref:
         description: "Commit or branch to build; publishing is disabled when set"
         type: string
-        required: true
+        default: ""
 
-# A reusable workflow cannot escalate beyond its caller's permissions, so the
-# Pages scopes are granted on the publish job alone; the build jobs run Docker
-# and compile third-party sources and must never hold a token that can write.
 permissions:
   contents: read
 
 jobs:
-  # The shared libraries, once per suite and architecture: every tool build
-  # of that suite/arch builds against these exact packages, and they are
-  # published once.
-  libs:
-    name: libs (${{ matrix.suite }} ${{ matrix.arch }})
-    runs-on: ubuntu-24.04-arm
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [bookworm, trixie, sid]
-        arch: [arm64, armhf]
-        include:
-          - arch: arm64
-            platform: linux/arm64
-          - arch: armhf
-            platform: linux/arm/v7
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-          fetch-depth: 0 # fpgatools version needs the series tags
-
-      - name: Build in debian:${{ matrix.suite }} for ${{ matrix.arch }}
-        run: |
-          docker run --rm --platform "${{ matrix.platform }}" \
-            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work -e SUITE=${{ matrix.suite }} \
-            "debian:${{ matrix.suite }}" \
-            sh -ec 'packaging/build-libs.sh'
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: debs-${{ matrix.suite }}-${{ matrix.arch }}-libs
-          path: built-libs/*.deb
-          if-no-files-found: error
-
   build:
-    name: ${{ matrix.tool }}/${{ matrix.track }} (${{ matrix.suite }} ${{ matrix.arch }})
-    needs: libs
-    runs-on: ubuntu-24.04-arm
-    strategy:
-      fail-fast: false
-      matrix:
-        tool: [openfpgaloader, openocd]
-        track: [stable, master]
-        suite: [bookworm, trixie, sid]
-        arch: [arm64, armhf]
-        include:
-          - arch: arm64
-            platform: linux/arm64
-          - arch: armhf
-            platform: linux/arm/v7
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-          fetch-depth: 0 # fpgatools version needs the series tags
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: debs-${{ matrix.suite }}-${{ matrix.arch }}-libs
-          path: built-libs
-
-      - name: Build in debian:${{ matrix.suite }} for ${{ matrix.arch }}
-        run: |
-          docker run --rm --platform "${{ matrix.platform }}" \
-            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work -e SUITE=${{ matrix.suite }} \
-            -e LIBS_DIR=/work/built-libs \
-            "debian:${{ matrix.suite }}" \
-            sh -ec 'packaging/build-deb.sh ${{ matrix.tool }} ${{ matrix.track }}'
-
-      # Debug symbols over 10 MB stay out of the apt repository (see the top
-      # of this file); the release job still publishes them. built-debs/ is
-      # root's (the build ran in a container), hence sudo.
-      - name: Set aside debug symbols too large for the apt repository
-        run: |
-          set -eu
-          mkdir -p built-dbgsym
-          for f in built-debs/*-dbgsym_*.deb; do
-            [ -e "$f" ] || continue
-            if [ "$(stat -c %s "$f")" -gt 10000000 ]; then
-              sudo mv -v "$f" built-dbgsym/
-            fi
-          done
-
-      # The publish workflow files each artifact under the longest suite its
-      # name starts with, so anything after "debs-<suite>-<arch>" only keeps
-      # the artifact names distinct.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: debs-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
-          path: built-debs/*.deb
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dbgsym-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
-          path: built-dbgsym/*.deb
-          if-no-files-found: ignore
+    uses: ./.github/workflows/build-debs.yml
+    with:
+      ref: ${{ inputs.ref }}
 
   release:
     name: every package to the build's release
     if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: [libs, build]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the build's release and upload assets
@@ -208,13 +103,13 @@ jobs:
 
   publish:
     # Scoped to this job alone: a job calling a reusable workflow sets the
-    # maximum permissions available to it.
+    # maximum permissions available to it. build-debs.yml never sees these.
     permissions:
       contents: read
       pages: write
       id-token: write
     if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: [libs, build]
+    needs: build
     # Pinned by commit: this job hands the signing key to the called workflow.
     # main was ece43dd on 2026-09-24; bump deliberately.
     uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@ece43dd05997c5cc7f7852af084f319431147ca8

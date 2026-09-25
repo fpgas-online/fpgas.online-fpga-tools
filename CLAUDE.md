@@ -17,6 +17,11 @@ changing structure; `README.md` is the user-facing description.
   `build-libs.sh` / `build-deb.sh`, `libpio.sh` (libpio0 comes from Raspberry
   Pi's archive on bookworm/trixie, from here elsewhere).
 - `.github/workflows/` — `ci.yml`, `debs.yml`, `static.yml`, `daily.yml` (the daily bump, full rebuild and publish).
+  The build matrices are `build-debs.yml` / `build-static.yml`, reusable and
+  read-only; publishing lives only in `debs.yml` / `static.yml`. Never give a
+  reusable workflow a job that needs more than `contents: read`: `daily.yml`
+  calls them, and a callee asking for more than the caller grants fails the
+  whole run at startup.
 - `build/` (gitignored) — upstream working trees under `build/src/<name>[-<track>]`.
 
 ## Commands
