@@ -21,7 +21,10 @@ changing structure; `README.md` is the user-facing description.
   read-only; publishing lives only in `debs.yml` / `static.yml`. Never give a
   reusable workflow a job that needs more than `contents: read`: `daily.yml`
   calls them, and a callee asking for more than the caller grants fails the
-  whole run at startup.
+  whole run at startup. `ci.yml`/`debs.yml`/`static.yml` cancel a pull
+  request's superseded runs; every non-PR run gets a concurrency group of its
+  own (a shared group would drop a pending publish), and the reusable
+  workflows carry no concurrency group.
 - `build/` (gitignored) — upstream working trees under `build/src/<name>[-<track>]`.
 
 ## Commands

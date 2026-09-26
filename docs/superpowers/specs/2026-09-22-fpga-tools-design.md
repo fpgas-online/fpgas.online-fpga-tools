@@ -372,6 +372,9 @@ same `packaging/build-deb.sh` the arm matrix uses (RP1 PIO on: librp1jtag
 compiles anywhere, it just has nothing to drive on amd64; with no
 `LIBS_DIR` the script builds librp1jtag0, and libpio0, first). PRs also run
 `build-debs.yml` and `build-static.yml` through `debs.yml` and `static.yml` (publish jobs are main-only).
+A new push to a pull request cancels that PR's older `ci.yml`/`debs.yml`/`static.yml`
+runs; runs on main and dispatches each get their own concurrency group, so none is ever
+cancelled or dropped.
 `packaging/compile-check.sh` is the developer-side equivalent (configure,
 build, assert cables/adapters/version) without packaging.
 
