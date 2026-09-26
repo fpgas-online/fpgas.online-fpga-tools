@@ -22,9 +22,9 @@ commit = "85be4fa02b2dd6a83716d7dfac3d25bbd260ff7b"
 
 [openfpgaloader.master]
 ref = "master"
-commit = "24e46d13bb8f2bc9371e9ca8443ece2fafc4b20d"
-describe = "v1.1.1-173-g24e46d1"
-date = "2026-09-15"
+commit = "676e53ec73d2261c974d610b7cf0693117c8d2ef"
+describe = "v1.1.1-179-g676e53e"
+date = "2026-09-23"
 
 [openocd]
 url = "https://github.com/openocd-org/openocd.git"
@@ -35,9 +35,9 @@ commit = "9ea7f3d647c8ecf6b0f1424002dfc3f4504a162c"
 
 [openocd.master]
 ref = "master"
-commit = "b04ccfeff73fb01b62e52e3d95882e8ff426016d"
-describe = "v0.12.0-1701-gb04ccfef"
-date = "2026-09-20"
+commit = "46d9b606b284888fd74632c792ef1a510b987e0a"
+describe = "v0.12.0-1703-g46d9b606"
+date = "2026-09-22"
 
 # librp1jtag: the RP1 PIO JTAG library both tools' rp1pio drivers call.
 # Packaged here as the shared librp1jtag0 / librp1jtag-dev the Debian tool
@@ -47,8 +47,8 @@ date = "2026-09-20"
 [rp1jtag]
 url = "https://github.com/mithro/rp1-jtag.git"
 ref = "main"
-commit = "f91dfc702a433e115dcc2ced5accf176b1f189fc"
-describe = "v0.0-95-gf91dfc7"
+commit = "6f50b133a84c4d30084c0b8233509ed1ea1567a4"
+describe = "v0.0-107-g6f50b13"
 
 # PIOLib from raspberrypi/utils: librp1jtag's /dev/pio0 backend. Debian
 # proper does not package it; Raspberry Pi's archive does (libpio0 and
