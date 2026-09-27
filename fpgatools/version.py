@@ -16,11 +16,17 @@ Nothing here is typed by hand (see CLAUDE.md "Versions are derived"):
   fpgas-online convention: `<tag>.post<N>+fpgasonline.<R>` (`<tag>` alone on
   the tag itself), continuing the `0.0.postN` versions mithro/rp1-jtag
   published under the same package name.
-* Our libpio0 (sid only; Raspberry Pi's archive has it everywhere else) is the
-  one date-versioned package: `<YYYYMMDD>+fpgasonline.<R>.g<sha7>`, the
-  date-first shape Raspberry Pi's own libpio0 uses. raspberrypi/utils has no
-  tags to describe against. R comes before the sha, so two pins with the same
-  commit date order by R, which rises with every commit here.
+* Our libpio0 (where Raspberry Pi's archive has none) is the one
+  date-versioned package: `<YYYYMMDD>+fpgasonline.<R>`, the date-first shape
+  Raspberry Pi's own libpio0 uses. raspberrypi/utils has no tags to describe
+  against. Two pins with the same commit date order by R, which rises with
+  every commit here.
+
+The published builds get their version from apt-repo-action's shared
+`scripts/deb-version.py` (its patch series form), which appends the suite
+suffix `~deb<N>` and, on a pull request, `~pr<P>`. It is given the upstream
+part from here (`fpgatools version --upstream`), so the two agree on
+everything before the first `~`; `check_debian_version` holds them to that.
 """
 
 from __future__ import annotations
@@ -106,15 +112,20 @@ def _master_parts(tool: str, pin: Pin) -> tuple[str, int, str]:
     return base, distance, sha
 
 
-def package_version(tool: str, track: str, pins: Pins, repo_version: str) -> str:
-    """The Debian version: `1.1.1+fpgasonline.0.0.post12` or
-    `1.1.1.post173+fpgasonline.0.0.post12`."""
+def tool_upstream_version(tool: str, track: str, pins: Pins) -> str:
+    """The upstream part of a tool's version: `1.1.1`, or `1.1.1.post173` on master."""
     _check(tool, track)
     pin = pins.pin(tool, track)
     if track == "stable":
-        return f"{upstream_base(pin)}+fpgasonline.{repo_version}"
+        return upstream_base(pin)
     base, distance, _sha = _master_parts(tool, pin)
-    return f"{base}.post{distance}+fpgasonline.{repo_version}"
+    return f"{base}.post{distance}"
+
+
+def package_version(tool: str, track: str, pins: Pins, repo_version: str) -> str:
+    """The Debian version: `1.1.1+fpgasonline.0.0.post12` or
+    `1.1.1.post173+fpgasonline.0.0.post12`."""
+    return f"{tool_upstream_version(tool, track, pins)}+fpgasonline.{repo_version}"
 
 
 def tool_version_string(tool: str, track: str, pins: Pins, repo_version: str) -> str:
@@ -144,17 +155,9 @@ def _pin_date(name: str, pin: Pin) -> str:
     return pin.date.replace("-", "")
 
 
-def library_version(name: str, pins: Pins, repo_version: str) -> str:
-    """The Debian version of a packaged library.
-
-    librp1jtag0: `0.0.post95+fpgasonline.0.0.post49`, from the pin's
-    `git describe` (`v0.0-95-gf91dfc7`). It continues the 0.0.postN versions
-    mithro/rp1-jtag published under the same package name, and sorts above
-    them once the pin is past the last one it published (0.0.post87).
-
-    libpio0: `20260914+fpgasonline.0.0.post49.gebc4a56`. raspberrypi/utils has
-    no tags; Raspberry Pi version their libpio0 by date, and so do we.
-    """
+def library_upstream_version(name: str, pins: Pins) -> str:
+    """The upstream part of a library's version: `0.0.post95` (librp1jtag0,
+    from the pin's describe) or `20260914` (libpio0, the pin's date)."""
     if name not in LIBS:
         raise FpgatoolsError(f"unknown library {name!r} (known: {', '.join(LIBS)})")
     pin = pins.pin(name)
@@ -164,9 +167,48 @@ def library_version(name: str, pins: Pins, repo_version: str) -> str:
                 "the rp1jtag pin needs describe in upstreams.toml (fpgatools bump records it)"
             )
         base, distance, _sha = parse_describe(pin.describe)
-        upstream = base if distance == 0 else f"{base}.post{distance}"
-        return f"{upstream}+fpgasonline.{repo_version}"
-    return f"{_pin_date(name, pin)}+fpgasonline.{repo_version}.g{pin.commit[:7]}"
+        return base if distance == 0 else f"{base}.post{distance}"
+    return _pin_date(name, pin)
+
+
+def library_version(name: str, pins: Pins, repo_version: str) -> str:
+    """The Debian version of a packaged library.
+
+    librp1jtag0: `0.0.post95+fpgasonline.0.0.post49`, from the pin's
+    `git describe` (`v0.0-95-gf91dfc7`). It continues the 0.0.postN versions
+    mithro/rp1-jtag published under the same package name, and sorts above
+    them once the pin is past the last one it published (0.0.post87).
+
+    libpio0: `20260914+fpgasonline.0.0.post49`. raspberrypi/utils has no
+    tags; Raspberry Pi version their libpio0 by date, and so do we.
+    """
+    return f"{library_upstream_version(name, pins)}+fpgasonline.{repo_version}"
+
+
+def upstream_version(name: str, track: str | None, pins: Pins) -> str:
+    """The upstream part of a tool's (with its track) or a library's version."""
+    if name in LIBS:
+        if track is not None:
+            raise FpgatoolsError(f"{name} has no tracks")
+        return library_upstream_version(name, pins)
+    if track is None:
+        raise FpgatoolsError(f"{name} needs a track ({', '.join(TRACKS)})")
+    return tool_upstream_version(name, track, pins)
+
+
+def check_debian_version(given: str, derived: str) -> str:
+    """`given` (the shared deb-version.py's) if it is `derived` plus suffixes.
+
+    The shared script appends `~deb<N>` and `~pr<P>` to what it is given;
+    everything before the first `~` must be what this module derives, or the
+    package's version and the one its binary reports would disagree.
+    """
+    if given != derived and not given.startswith(derived + "~"):
+        raise VersionError(
+            f"version {given!r} is not {derived!r} with suite or pull request suffixes;"
+            " the shared deb-version.py and fpgatools disagree on the repo version"
+        )
+    return given
 
 
 # --- CLI ------------------------------------------------------------------------
@@ -180,7 +222,9 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         "(default), the string the binary should report (--tool-string), "
         "or this repo's own version R (--repo).",
     )
-    p.add_argument("tool", nargs="?", help="openfpgaloader or openocd")
+    p.add_argument(
+        "tool", nargs="?", help="openfpgaloader or openocd (or, with --upstream, a library)"
+    )
     p.add_argument("track", nargs="?", help="stable or master")
     p.add_argument(
         "--tool-string",
@@ -194,10 +238,20 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="print this repo's version R alone",
     )
+    p.add_argument(
+        "--upstream",
+        action="store_true",
+        help="print only the upstream part, for the shared deb-version.py's --upstream-version",
+    )
     p.set_defaults(func=_run, parser=p)
 
 
 def _run(args: argparse.Namespace) -> int:
+    if args.upstream:
+        if args.tool is None:
+            args.parser.error("version --upstream needs <tool> <track> or <library>")
+        print(upstream_version(args.tool, args.track, load()))
+        return 0
     r = repo_version()
     if args.repo:
         print(r)

@@ -263,7 +263,7 @@ def test_library_version_piolib(fixture_pins):
     pin = fixture_pins.pin("piolib")
     date = pin.date.replace("-", "")
     v = version.library_version("piolib", fixture_pins, "1.2")
-    assert v == f"{date}+fpgasonline.1.2.g{pin.commit[:7]}"
+    assert v == f"{date}+fpgasonline.1.2"
 
 
 def test_library_version_errors():
@@ -276,3 +276,56 @@ def test_library_version_errors():
         version.library_version("rp1jtag", _with_pin("rp1jtag", None, describe="junk"), "0.0")
     with pytest.raises(FpgatoolsError, match="needs a date"):
         version.library_version("piolib", _with_pin("piolib", None, date=None), "0.0")
+
+
+# --- the upstream part, for the shared deb-version.py ---------------------------
+
+
+def test_upstream_version(fixture_pins):
+    assert version.upstream_version("openfpgaloader", "stable", fixture_pins) == "1.1.1"
+    assert version.upstream_version("openfpgaloader", "master", fixture_pins) == "1.1.1.post173"
+    assert version.upstream_version("openocd", "master", fixture_pins) == "0.12.0.post1701"
+    pin = fixture_pins.pin("piolib")
+    assert version.upstream_version("piolib", None, fixture_pins) == pin.date.replace("-", "")
+    rp1 = version.upstream_version("rp1jtag", None, fixture_pins)
+    assert version.library_version("rp1jtag", fixture_pins, R) == f"{rp1}+fpgasonline.{R}"
+
+
+@pytest.mark.parametrize(
+    ("tool", "track"),
+    [("openfpgaloader", "stable"), ("openfpgaloader", "master"),
+     ("openocd", "stable"), ("openocd", "master")],
+)
+def test_package_version_is_upstream_plus_repo_version(fixture_pins, tool, track):
+    """What the shared deb-version.py is given, plus `+fpgasonline.<R>`, is
+    fpgatools' own version: the two can only differ in their suffixes."""
+    upstream = version.upstream_version(tool, track, fixture_pins)
+    assert version.package_version(tool, track, fixture_pins, R) == f"{upstream}+fpgasonline.{R}"
+
+
+def test_upstream_version_errors(fixture_pins):
+    with pytest.raises(FpgatoolsError, match="has no tracks"):
+        version.upstream_version("piolib", "stable", fixture_pins)
+    with pytest.raises(FpgatoolsError, match="needs a track"):
+        version.upstream_version("openocd", None, fixture_pins)
+    with pytest.raises(FpgatoolsError, match="unknown tool"):
+        version.upstream_version("gcc", "stable", fixture_pins)
+
+
+def test_check_debian_version():
+    derived = "1.1.1+fpgasonline.0.0.post12"
+    for ok in (derived, derived + "~deb13", derived + "~deb12~pr7", derived + "~pr7"):
+        assert version.check_debian_version(ok, derived) == ok
+    for bad in ("1.1.1+fpgasonline.0.0.post1", derived + ".1", derived + "-1", "x" + derived):
+        with pytest.raises(version.VersionError, match="disagree"):
+            version.check_debian_version(bad, derived)
+
+
+def test_cli_version_upstream(capsys):
+    real = pins.load()
+    assert cli.main(["version", "--upstream", "openocd", "master"]) == 0
+    assert capsys.readouterr().out == version.upstream_version("openocd", "master", real) + "\n"
+    assert cli.main(["version", "--upstream", "piolib"]) == 0
+    assert capsys.readouterr().out == version.upstream_version("piolib", None, real) + "\n"
+    with pytest.raises(SystemExit):
+        cli.main(["version", "--upstream"])
