@@ -14,17 +14,20 @@ changing structure; `README.md` is the user-facing description.
   `version`, `debianize`, `bump`.
 - `packaging/` — debian templates (the two tools, and the shared libraries
   `rp1jtag` → librp1jtag0 and `piolib` → libpio0), Alpine static scripts,
-  `build-libs.sh` / `build-deb.sh`, `libpio.sh` (libpio0 comes from Raspberry
-  Pi's archive on bookworm/trixie, from here elsewhere).
-- `.github/workflows/` — `ci.yml`, `debs.yml`, `static.yml`, `daily.yml` (the daily bump, full rebuild and publish).
-  The build matrices are `build-debs.yml` / `build-static.yml`, reusable and
-  read-only; publishing lives only in `debs.yml` / `static.yml`. Never give a
-  reusable workflow a job that needs more than `contents: read`: `daily.yml`
-  calls them, and a callee asking for more than the caller grants fails the
-  whole run at startup. `ci.yml`/`debs.yml`/`static.yml` cancel a pull
-  request's superseded runs; every non-PR run gets a concurrency group of its
-  own (a shared group would drop a pending publish), and the reusable
-  workflows carry no concurrency group.
+  `build-libs.sh` / `build-deb.sh` / `install-test.sh`, `libpio.sh` (libpio0
+  comes from Raspberry Pi's archive on bookworm/trixie and their Raspbian
+  suites, from here elsewhere).
+- `.github/workflows/` — `deb.yml` (`Debian packages`: test, build-deb,
+  publish-apt, release), `static.yml`, `daily.yml` (the daily bump, full
+  rebuild and publish). The build matrices are `build-debs.yml` /
+  `build-static.yml`, reusable and read-only; publishing lives only in
+  `deb.yml` / `static.yml`. Never give a reusable workflow a job that needs
+  more than `contents: read`: `daily.yml` calls them, and a callee asking for
+  more than the caller grants fails the whole run at startup. `deb.yml`
+  follows mithro/apt-repo-action's `docs/packaging.md` (names, triggers,
+  concurrency, `publish-apt.yml@main`, the shared version and build-deb
+  image); `.github/apt-packaging.toml` declares its suites, architectures and
+  exceptions. The reusable workflows carry no concurrency group.
 - `build/` (gitignored) — upstream working trees under `build/src/<name>[-<track>]`.
 
 ## Commands
@@ -57,13 +60,17 @@ whoever writes them.
 
 - No new tool functionality: this repo extracts, rebases and packages.
   Feature work belongs in the upstream projects or their forks.
-- Versions are derived, never typed, and follow `git describe` (`X.Y.postN`):
+- Versions are derived, never typed, and follow `git describe` (`X.Y.postN`).
+  The published Debian versions are apt-repo-action's shared
+  `deb-version.py`'s (patch series form, plus `~deb<N>`/`~pr<P>`), given
+  `fpgatools version --upstream`; `fpgatools debianize --version` checks they
+  are fpgatools' own plus those suffixes. The form:
   `<upstream>+fpgasonline.<repo version>`, where `<upstream>` is the release
   tag or, on master and for librp1jtag0, `<tag>.post<N>` from the pin's
   recorded describe, and the repo version is this repo's own describe
-  against `vX.Y` series tags. The one date-versioned package is our sid
-  libpio0, which follows Raspberry Pi's scheme (Tim, 2026-09-24). Any other
-  scheme needs Tim's approval first.
+  against `vX.Y` series tags. The one date-versioned package is our
+  libpio0 (forky, sid, raspbian-forky), which follows Raspberry Pi's scheme
+  (Tim, 2026-09-24). Any other scheme needs Tim's approval first.
 - Debs are built with `dh` from `packaging/debian/<name>/`, never with
   hand-rolled `dpkg-deb` control files.
 - The Debian tools link librp1jtag shared (librp1jtag0); the static release

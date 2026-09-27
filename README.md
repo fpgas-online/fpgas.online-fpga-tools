@@ -65,22 +65,43 @@ the same string in the package version, in `openFPGALoader --Version`
 `0.12.0+dev-01701-gb04ccfef+fpgasonline.0.0.post12` on master) and in the
 static binary filenames.
 
-## Installing
+The Debian packages add the suite they were built for, so each suite's
+package is its own and an upgrade to a newer Debian release moves to its
+build: `~deb12` for bookworm and raspbian-bookworm, `~deb13` for trixie,
+`~deb14` for forky, nothing for sid
+(`1.1.1+fpgasonline.0.0.post12~deb13`). A pull request's preview packages
+end in `~pr<N>` as well, so they sort below the next build of `main`. These
+are apt-repo-action's shared versions
+([packaging.md](https://github.com/mithro/apt-repo-action/blob/main/docs/packaging.md#versions),
+its patch series form): the build gives its `scripts/deb-version.py` the
+upstream part from `fpgatools version --upstream`, and `fpgatools debianize`
+checks the result is its own version plus those suffixes. The binaries
+report the version without them.
 
-### Debian packages (bookworm, trixie, sid; arm64, armhf)
+## Install
 
-One flat apt repository per suite, signed with this repository's key.
+### Debian packages (arm64, armhf)
+
+One flat apt repository per suite, signed with this repository's key. The
+suites are bookworm, trixie, forky and sid (arm64 and armhf), and
+raspbian-bookworm, raspbian-trixie and raspbian-forky (32-bit Raspberry Pi
+OS, ARMv6 armhf). Put your suite's name in place of `trixie` below: on
+64-bit Raspberry Pi OS, or Debian, that is the codename (`bookworm` on the
+fpgas.online Pi NFS root); on 32-bit Raspberry Pi OS it is
+`raspbian-<codename>`.
 
 ```bash
-sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://fpgas.online/fpgas.online-fpga-tools/fpgas.online-fpga-tools.gpg \
-  | sudo tee /etc/apt/keyrings/fpgas.online-fpga-tools.gpg > /dev/null
-echo "deb [signed-by=/etc/apt/keyrings/fpgas.online-fpga-tools.gpg] \
-  https://fpgas.online/fpgas.online-fpga-tools/$(. /etc/os-release; echo $VERSION_CODENAME)/ ./" \
+sudo install -d -m0755 /etc/apt/keyrings
+curl -fsSL https://fpgas.online/fpgas.online-fpga-tools/fpgas.online-fpga-tools.gpg | sudo tee /etc/apt/keyrings/fpgas.online-fpga-tools.gpg > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/fpgas.online-fpga-tools.gpg] https://fpgas.online/fpgas.online-fpga-tools/trixie/ ./" \
   | sudo tee /etc/apt/sources.list.d/fpgas.online-fpga-tools.list
 sudo apt update
 sudo apt install openfpgaloader-fpgasonline openocd-fpgasonline   # or the -git pair
 ```
+
+The repository's signing key is
+`A0F3 76D2 174A 0A54 C6F1  3AAA 02E0 6C05 92A2 EA30`
+(`gpg --show-keys /etc/apt/keyrings/fpgas.online-fpga-tools.gpg` shows it).
 
 The packages `Provide`/`Conflict`/`Replace` Debian's `openfpgaloader` and
 `openocd` (and the earlier `openfpgaloader-rp1pio` / `openocd-rp1pio` from
@@ -91,7 +112,7 @@ Both depend on two shared libraries:
 | Package | Library | Where it comes from |
 |---|---|---|
 | `librp1jtag0` | RP1 PIO JTAG ([mithro/rp1-jtag](https://github.com/mithro/rp1-jtag)); exports the `rp1_jtag_*` API only | this repository, every suite. Its version (`0.0.post<N>+fpgasonline.<patchset>`, from rp1-jtag's `git describe`) continues the `0.0.postN` packages mithro/rp1-jtag published under the same name and sorts above them, so it upgrades them in place |
-| `libpio0` | PIOLib, the `/dev/pio0` user-space API ([raspberrypi/utils](https://github.com/raspberrypi/utils) `piolib/`) | **bookworm, trixie: Raspberry Pi's archive** (`archive.raspberrypi.com`, which every Raspberry Pi OS install has configured). sid: this repository, versioned `<YYYYMMDD>+fpgasonline.<patchset>.g<sha7>`, date-first like Raspberry Pi's own (raspberrypi/utils has no tags to describe against) |
+| `libpio0` | PIOLib, the `/dev/pio0` user-space API ([raspberrypi/utils](https://github.com/raspberrypi/utils) `piolib/`) | **bookworm, trixie (and raspbian-bookworm, raspbian-trixie): Raspberry Pi's archive** (`archive.raspberrypi.com`, which every Raspberry Pi OS install has configured). forky, sid and raspbian-forky, which it doesn't have: this repository, versioned `<YYYYMMDD>+fpgasonline.<patchset>`, date-first like Raspberry Pi's own (raspberrypi/utils has no tags to describe against) |
 
 So on bookworm or trixie the packages install on Raspberry Pi OS, or on any
 Debian with Raspberry Pi's archive added; plain Debian without it has no
@@ -171,12 +192,15 @@ packaging/debian/<name>/  debhelper templates rendered by `fpgatools debianize`
                           (the two tools, and the libraries rp1jtag and piolib)
 packaging/static/         Alpine (musl) static build scripts
 packaging/build-libs.sh   builds librp1jtag0 (and libpio0 where Raspberry Pi has none)
-packaging/build-deb.sh    what the deb workflow runs inside debian:<suite>
+packaging/build-deb.sh    what the deb workflow runs inside debian:<suite> (or Raspbian)
+packaging/install-test.sh installs a built tool into a clean container and runs it
 packaging/libpio.sh       which suites take libpio0 from Raspberry Pi's archive
 packaging/keys/           Raspberry Pi's archive keyring, for the build containers
 packaging/release.py      uploads static assets to the series release
-.github/workflows/        ci.yml, debs.yml, static.yml, daily.yml; the build matrices
+.github/workflows/        deb.yml, static.yml, daily.yml; the build matrices
                           themselves are build-debs.yml and build-static.yml
+.github/apt-packaging.toml  how this repository is packaged (apt-repo-action's
+                          declaration: suites, architectures, exceptions)
 docs/superpowers/         design spec and implementation plan
 ```
 
@@ -249,8 +273,10 @@ the candidate and stops there.
 
 ## Publishing
 
-Only `main` publishes. `debs.yml` signs and deploys the apt repository to
-GitHub Pages through [mithro/apt-repo-action](https://github.com/mithro/apt-repo-action)
+Only `main` publishes. `deb.yml` signs and deploys the apt repository to
+GitHub Pages through [mithro/apt-repo-action](https://github.com/mithro/apt-repo-action)'s
+`publish-apt.yml@main`, following its
+[packaging conventions](https://github.com/mithro/apt-repo-action/blob/main/docs/packaging.md)
 (secret `APT_GPG_PRIVATE_KEY`, per-repository signing key); `static.yml`
 uploads to the series prerelease with the repository's own token. Pull
 requests build everything and publish nothing.
