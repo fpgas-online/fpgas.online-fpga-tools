@@ -23,7 +23,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 apt-get update -q
 apt-get install -y -q --no-install-recommends \
-	build-essential devscripts debhelper equivs fakeroot binutils \
+	build-essential debhelper fakeroot binutils \
 	cmake git pkg-config python3 ca-certificates
 
 # The container runs as root over a bind mount owned by the runner user.

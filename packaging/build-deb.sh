@@ -31,7 +31,7 @@ export REPO SUITE
 
 apt-get update -q
 apt-get install -y -q --no-install-recommends \
-	build-essential devscripts debhelper equivs fakeroot \
+	build-essential debhelper fakeroot \
 	cmake git pkg-config python3 ca-certificates
 
 # The container runs as root over a bind mount owned by the runner user.
