@@ -4,7 +4,11 @@
 # with the repository mounted at $REPO (default /work); writes the .deb
 # files to $LIBS_OUT (default $REPO/built-libs).
 #
-#   SUITE=<suite> packaging/build-libs.sh
+#   SUITE=<suite> [RP1JTAG_VERSION=<v>] [PIOLIB_VERSION=<v>] packaging/build-libs.sh
+#
+# The versions are the shared deb-version.py's (CI passes them, with their
+# ~deb<N> and ~pr<P> suffixes; `fpgatools debianize --version` checks them).
+# Without them, a local build gets fpgatools' own, unsuffixed.
 #
 # librp1jtag0 / librp1jtag-dev always. libpio0 / libpio-dev only where
 # Raspberry Pi's archive does not provide them (see packaging/libpio.sh);
@@ -34,13 +38,13 @@ fpgatools fetch rp1jtag
 # fetch stays pristine (rp1-jtag ships a debian/ of its own, which the
 # rendered one replaces) and no stale cmake build/ directory leaks in.
 pkgroot=$REPO/build/pkg
-build_lib() { # build_lib <rp1jtag|piolib>
+build_lib() { # build_lib <rp1jtag|piolib> [<version>]
 	tree=$pkgroot/$1
 	rm -rf "$tree"
 	mkdir -p "$pkgroot"
 	cp -a "$REPO/build/src/$1" "$tree"
 	rm -rf "$tree/.git" "$tree/build" "$tree/piolib/build"
-	fpgatools debianize "$1" --dest "$tree"
+	fpgatools debianize "$1" --dest "$tree" ${2:+--version "$2"}
 	(cd "$tree" && apt-get build-dep -y -q ./ && dpkg-buildpackage -us -uc -b)
 }
 
@@ -53,13 +57,13 @@ if libpio_from_rpi "$SUITE"; then
 	apt-get install -y -q libpio-dev
 else
 	echo "==> libpio: built here (Raspberry Pi's archive has none for $SUITE $(dpkg --print-architecture))"
-	build_lib piolib
+	build_lib piolib "${PIOLIB_VERSION:-}"
 	cp "$pkgroot"/libpio0_*.deb "$pkgroot"/libpio-dev_*.deb "$LIBS_OUT/"
 	apt-get install -y -q "$LIBS_OUT"/libpio0_*.deb "$LIBS_OUT"/libpio-dev_*.deb
 fi
 dpkg-query -W libpio0 libpio-dev
 
-build_lib rp1jtag
+build_lib rp1jtag "${RP1JTAG_VERSION:-}"
 cp "$pkgroot"/librp1jtag0_*.deb "$pkgroot"/librp1jtag-dev_*.deb "$LIBS_OUT/"
 apt-get install -y -q "$LIBS_OUT"/librp1jtag0_*.deb "$LIBS_OUT"/librp1jtag-dev_*.deb
 pkg-config --modversion rp1jtag
