@@ -63,7 +63,7 @@ jobs:
 
       - name: Prepare the image
         id: image
-        uses: mithro/apt-repo-action/build-deb@phase2/integration
+        uses: mithro/apt-repo-action/build-deb@main
         with:
           suite: ${{ matrix.suite }}
           arch: ${{ matrix.arch }}
@@ -79,14 +79,14 @@ jobs:
 
       - name: Version of librp1jtag0
         id: rp1jtag
-        uses: mithro/apt-repo-action/deb-version@phase2/integration
+        uses: mithro/apt-repo-action/deb-version@main
         with:
           suite: ${{ matrix.suite }}
           version-args: --owner-tag fpgasonline --upstream-version ${{ steps.upstream.outputs.rp1jtag }}
 
       - name: Version of libpio0
         id: piolib
-        uses: mithro/apt-repo-action/deb-version@phase2/integration
+        uses: mithro/apt-repo-action/deb-version@main
         with:
           suite: ${{ matrix.suite }}
           version-args: --owner-tag fpgasonline --upstream-version ${{ steps.upstream.outputs.piolib }}
@@ -145,7 +145,7 @@ jobs:
 
       - name: Prepare the image
         id: image
-        uses: mithro/apt-repo-action/build-deb@phase2/integration
+        uses: mithro/apt-repo-action/build-deb@main
         with:
           suite: ${{ matrix.target.suite }}
           arch: ${{ matrix.target.arch }}
@@ -163,7 +163,7 @@ jobs:
 
       - name: Version
         id: version
-        uses: mithro/apt-repo-action/deb-version@phase2/integration
+        uses: mithro/apt-repo-action/deb-version@main
         with:
           suite: ${{ matrix.target.suite }}
           version-args: --owner-tag fpgasonline --upstream-version ${{ steps.upstream.outputs.version }}
