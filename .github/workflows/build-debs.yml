@@ -20,7 +20,13 @@ name: Build Debian packages
 # the shared patch series form, from the upstream part fpgatools derives
 # from upstreams.toml.
 #
-# TODO: back to @main once mithro/apt-repo-action#25-#28 merge.
+# The packages' build dependencies go through build-deb's own
+# build-deb/raspbian/build-dep.sh (packaging/build-dep.sh, from a checkout of
+# mithro/apt-repo-action at the same main): the suite first and, for a
+# raspbian-<codename> suite its archive alone can't satisfy, Raspbian's
+# verified <codename>-staging and rebuilds of what its builders are behind
+# on. Only the build container sees those; the install test runs in a clean
+# container of the suite alone.
 on:
   workflow_call:
     inputs:
@@ -60,6 +66,14 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0 # the version needs the history and the vX.Y tags
+
+      # build-deb's build-dependency step, for packaging/build-dep.sh.
+      - name: Check out apt-repo-action
+        uses: actions/checkout@v5
+        with:
+          repository: mithro/apt-repo-action
+          ref: main
+          path: .apt-repo-action
 
       - name: Prepare the image
         id: image
@@ -102,7 +116,24 @@ jobs:
           docker run --rm --platform "$PLATFORM" \
             -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work \
             -e SUITE -e RP1JTAG_VERSION -e PIOLIB_VERSION \
+            -e APT_REPO_ACTION=/work/.apt-repo-action -e NOTES=/work/build/notes \
             "$IMAGE" sh -ec 'packaging/build-libs.sh'
+
+      # What build-dep.sh took from Raspbian staging or rebuilt, if anything.
+      - name: Build dependencies from Raspbian staging
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set -eu
+          for f in from-staging rebuilt; do
+            p=build/notes/$f
+            [ -s "$p" ] || continue
+            {
+              echo "### $SUITE: build dependencies $f"
+              sed 's/^/- /' "$p"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Raspbian $f::$SUITE: $(grep -c . "$p") build dependencies $f (listed in the step summary)"
+          done
 
       # publish-apt takes the suite from the longest configured suite the name
       # starts with after "debs-"; anything after "debs-<suite>-<arch>" only
@@ -142,6 +173,14 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0 # the version needs the history and the vX.Y tags
+
+      # build-deb's build-dependency step, for packaging/build-dep.sh.
+      - name: Check out apt-repo-action
+        uses: actions/checkout@v5
+        with:
+          repository: mithro/apt-repo-action
+          ref: main
+          path: .apt-repo-action
 
       - name: Prepare the image
         id: image
@@ -186,7 +225,24 @@ jobs:
           docker run --rm --platform "$PLATFORM" \
             -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work \
             -e SUITE -e DEB_VERSION -e INSTALL_TEST=no -e LIBS_DIR=/work/built-libs \
+            -e APT_REPO_ACTION=/work/.apt-repo-action -e NOTES=/work/build/notes \
             "$IMAGE" sh -ec 'packaging/build-deb.sh "$0" "$1"' "$TOOL" "$TRACK"
+
+      # What build-dep.sh took from Raspbian staging or rebuilt, if anything.
+      - name: Build dependencies from Raspbian staging
+        env:
+          SUITE: ${{ matrix.target.suite }}
+        run: |
+          set -eu
+          for f in from-staging rebuilt; do
+            p=build/notes/$f
+            [ -s "$p" ] || continue
+            {
+              echo "### $SUITE: build dependencies $f"
+              sed 's/^/- /' "$p"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Raspbian $f::$SUITE: $(grep -c . "$p") build dependencies $f (listed in the step summary)"
+          done
 
       # A clean container of the suite: the package installs with only the
       # suite's archive, Raspberry Pi's (for libpio0 where it has it) and

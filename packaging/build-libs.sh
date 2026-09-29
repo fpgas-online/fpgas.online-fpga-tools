@@ -45,7 +45,7 @@ build_lib() { # build_lib <rp1jtag|piolib> [<version>]
 	cp -a "$REPO/build/src/$1" "$tree"
 	rm -rf "$tree/.git" "$tree/build" "$tree/piolib/build"
 	fpgatools debianize "$1" --dest "$tree" ${2:+--version "$2"}
-	(cd "$tree" && apt-get build-dep -y -q ./ && dpkg-buildpackage -us -uc -b)
+	(cd "$tree" && "$REPO/packaging/build-dep.sh" && dpkg-buildpackage -us -uc -b)
 }
 
 # Nothing from an earlier run may be picked up by the globs below.

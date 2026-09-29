@@ -64,7 +64,7 @@ fpgatools debianize "$tool" "$track" ${DEB_VERSION:+--version "$DEB_VERSION"}
 
 # Build-Depends from the rendered control file, nothing duplicated here.
 cd "$src"
-apt-get build-dep -y -q ./
+"$REPO/packaging/build-dep.sh"
 # The source and binary package share one name (debian/changelog has it).
 # dpkg-buildpackage writes into build/src/, which every tool/track shares,
 # so only this package's files are cleared, copied and installed.
