@@ -1,6 +1,6 @@
 name: Build Debian packages
 
-# The deb build matrix, called by debs.yml (which then publishes) and by
+# The deb build matrix, called by deb.yml (which then publishes) and by
 # daily.yml (which builds candidate pins and must never publish). It holds
 # only a read token, and asks for nothing more: a called workflow cannot be
 # granted more than its caller holds, and GitHub rejects the whole run at
@@ -8,8 +8,25 @@ name: Build Debian packages
 # Docker and compile third-party sources and must never hold a token that
 # can write.
 #
-# The artifacts it uploads belong to the calling run, where debs.yml's
-# release and publish jobs collect them.
+# The artifacts it uploads belong to the calling run, where deb.yml's
+# release and publish-apt jobs collect them.
+#
+# Suites and architectures are .github/apt-packaging.toml's: arm64 and armhf
+# for bookworm, trixie, forky and sid, and armhf (ARMv6) for the Raspbian
+# ones. Every job runs on an arm64 runner, which also runs 32-bit ARM code
+# natively. mithro/apt-repo-action's build-deb (with `build: false`) gives
+# each job its image: debian:<suite>, or a Raspbian root file system it
+# bootstraps and caches. Its deb-version gives each package its version, in
+# the shared patch series form, from the upstream part fpgatools derives
+# from upstreams.toml.
+#
+# The packages' build dependencies go through build-deb's own
+# build-deb/raspbian/build-dep.sh (packaging/build-dep.sh, from a checkout of
+# mithro/apt-repo-action at the same main): the suite first and, for a
+# raspbian-<codename> suite its archive alone can't satisfy, Raspbian's
+# verified <codename>-staging and rebuilds of what its builders are behind
+# on. Only the build container sees those; the install test runs in a clean
+# container of the suite alone.
 on:
   workflow_call:
     inputs:
@@ -31,34 +48,106 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [bookworm, trixie, sid]
-        arch: [arm64, armhf]
         include:
-          - arch: arm64
-            platform: linux/arm64
-          - arch: armhf
-            platform: linux/arm/v7
+          - { suite: bookworm, arch: arm64 }
+          - { suite: bookworm, arch: armhf }
+          - { suite: trixie, arch: arm64 }
+          - { suite: trixie, arch: armhf }
+          - { suite: forky, arch: arm64 }
+          - { suite: forky, arch: armhf }
+          - { suite: sid, arch: arm64 }
+          - { suite: sid, arch: armhf }
+          - { suite: raspbian-bookworm, arch: armhf }
+          - { suite: raspbian-trixie, arch: armhf }
+          - { suite: raspbian-forky, arch: armhf }
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
-          fetch-depth: 0 # fpgatools version needs the series tags
+          fetch-depth: 0 # the version needs the history and the vX.Y tags
 
-      - name: Build in debian:${{ matrix.suite }} for ${{ matrix.arch }}
+      # build-deb's build-dependency step, for packaging/build-dep.sh.
+      - name: Check out apt-repo-action
+        uses: actions/checkout@v5
+        with:
+          repository: mithro/apt-repo-action
+          ref: main
+          path: .apt-repo-action
+
+      - name: Prepare the image
+        id: image
+        uses: mithro/apt-repo-action/build-deb@main
+        with:
+          suite: ${{ matrix.suite }}
+          arch: ${{ matrix.arch }}
+          build: "false"
+
+      - name: Upstream versions
+        id: upstream
         run: |
-          docker run --rm --platform "${{ matrix.platform }}" \
-            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work -e SUITE=${{ matrix.suite }} \
-            "debian:${{ matrix.suite }}" \
-            sh -ec 'packaging/build-libs.sh'
+          set -eu
+          fpgatools() { PYTHONPATH="$GITHUB_WORKSPACE" python3 -m fpgatools "$@"; }
+          echo "rp1jtag=$(fpgatools version --upstream rp1jtag)" >> "$GITHUB_OUTPUT"
+          echo "piolib=$(fpgatools version --upstream piolib)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      - name: Version of librp1jtag0
+        id: rp1jtag
+        uses: mithro/apt-repo-action/deb-version@main
+        with:
+          suite: ${{ matrix.suite }}
+          version-args: --owner-tag fpgasonline --upstream-version ${{ steps.upstream.outputs.rp1jtag }}
+
+      - name: Version of libpio0
+        id: piolib
+        uses: mithro/apt-repo-action/deb-version@main
+        with:
+          suite: ${{ matrix.suite }}
+          version-args: --owner-tag fpgasonline --upstream-version ${{ steps.upstream.outputs.piolib }}
+
+      - name: Build
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          PLATFORM: ${{ steps.image.outputs.platform }}
+          SUITE: ${{ matrix.suite }}
+          RP1JTAG_VERSION: ${{ steps.rp1jtag.outputs.version }}
+          PIOLIB_VERSION: ${{ steps.piolib.outputs.version }}
+        run: |
+          docker run --rm --platform "$PLATFORM" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work \
+            -e SUITE -e RP1JTAG_VERSION -e PIOLIB_VERSION \
+            -e APT_REPO_ACTION=/work/.apt-repo-action -e NOTES=/work/build/notes \
+            "$IMAGE" sh -ec 'packaging/build-libs.sh'
+
+      # What build-dep.sh took from Raspbian staging or rebuilt, if anything.
+      - name: Build dependencies from Raspbian staging
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set -eu
+          for f in from-staging rebuilt; do
+            p=build/notes/$f
+            [ -s "$p" ] || continue
+            {
+              echo "### $SUITE: build dependencies $f"
+              sed 's/^/- /' "$p"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Raspbian $f::$SUITE: $(grep -c . "$p") build dependencies $f (listed in the step summary)"
+          done
+
+      # publish-apt takes the suite from the longest configured suite the name
+      # starts with after "debs-"; anything after "debs-<suite>-<arch>" only
+      # keeps the artifact names distinct.
+      - name: Upload
+        uses: actions/upload-artifact@v7
         with:
           name: debs-${{ matrix.suite }}-${{ matrix.arch }}-libs
           path: built-libs/*.deb
           if-no-files-found: error
+          retention-days: 14
 
   build:
-    name: ${{ matrix.tool }}/${{ matrix.track }} (${{ matrix.suite }} ${{ matrix.arch }})
+    name: ${{ matrix.tool }}/${{ matrix.track }} (${{ matrix.target.suite }} ${{ matrix.target.arch }})
     needs: libs
     runs-on: ubuntu-24.04-arm
     strategy:
@@ -66,35 +155,114 @@ jobs:
       matrix:
         tool: [openfpgaloader, openocd]
         track: [stable, master]
-        suite: [bookworm, trixie, sid]
-        arch: [arm64, armhf]
-        include:
-          - arch: arm64
-            platform: linux/arm64
-          - arch: armhf
-            platform: linux/arm/v7
+        target:
+          - { suite: bookworm, arch: arm64 }
+          - { suite: bookworm, arch: armhf }
+          - { suite: trixie, arch: arm64 }
+          - { suite: trixie, arch: armhf }
+          - { suite: forky, arch: arm64 }
+          - { suite: forky, arch: armhf }
+          - { suite: sid, arch: arm64 }
+          - { suite: sid, arch: armhf }
+          - { suite: raspbian-bookworm, arch: armhf }
+          - { suite: raspbian-trixie, arch: armhf }
+          - { suite: raspbian-forky, arch: armhf }
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
-          fetch-depth: 0 # fpgatools version needs the series tags
+          fetch-depth: 0 # the version needs the history and the vX.Y tags
 
-      - uses: actions/download-artifact@v4
+      # build-deb's build-dependency step, for packaging/build-dep.sh.
+      - name: Check out apt-repo-action
+        uses: actions/checkout@v5
         with:
-          name: debs-${{ matrix.suite }}-${{ matrix.arch }}-libs
+          repository: mithro/apt-repo-action
+          ref: main
+          path: .apt-repo-action
+
+      - name: Prepare the image
+        id: image
+        uses: mithro/apt-repo-action/build-deb@main
+        with:
+          suite: ${{ matrix.target.suite }}
+          arch: ${{ matrix.target.arch }}
+          build: "false"
+
+      - name: Upstream version
+        id: upstream
+        env:
+          TOOL: ${{ matrix.tool }}
+          TRACK: ${{ matrix.track }}
+        run: |
+          set -eu
+          v=$(PYTHONPATH="$GITHUB_WORKSPACE" python3 -m fpgatools version --upstream "$TOOL" "$TRACK")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Version
+        id: version
+        uses: mithro/apt-repo-action/deb-version@main
+        with:
+          suite: ${{ matrix.target.suite }}
+          version-args: --owner-tag fpgasonline --upstream-version ${{ steps.upstream.outputs.version }}
+
+      - name: Download the libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: debs-${{ matrix.target.suite }}-${{ matrix.target.arch }}-libs
           path: built-libs
 
-      - name: Build in debian:${{ matrix.suite }} for ${{ matrix.arch }}
+      - name: Build
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          PLATFORM: ${{ steps.image.outputs.platform }}
+          SUITE: ${{ matrix.target.suite }}
+          DEB_VERSION: ${{ steps.version.outputs.version }}
+          TOOL: ${{ matrix.tool }}
+          TRACK: ${{ matrix.track }}
         run: |
-          docker run --rm --platform "${{ matrix.platform }}" \
-            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work -e SUITE=${{ matrix.suite }} \
-            -e LIBS_DIR=/work/built-libs \
-            "debian:${{ matrix.suite }}" \
-            sh -ec 'packaging/build-deb.sh ${{ matrix.tool }} ${{ matrix.track }}'
+          docker run --rm --platform "$PLATFORM" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work -e REPO=/work \
+            -e SUITE -e DEB_VERSION -e INSTALL_TEST=no -e LIBS_DIR=/work/built-libs \
+            -e APT_REPO_ACTION=/work/.apt-repo-action -e NOTES=/work/build/notes \
+            "$IMAGE" sh -ec 'packaging/build-deb.sh "$0" "$1"' "$TOOL" "$TRACK"
 
-      # Debug symbols over 10 MB stay out of the apt repository (see the top
-      # of debs.yml); its release job still publishes them. built-debs/ is
-      # root's (the build ran in a container), hence sudo.
+      # What build-dep.sh took from Raspbian staging or rebuilt, if anything.
+      - name: Build dependencies from Raspbian staging
+        env:
+          SUITE: ${{ matrix.target.suite }}
+        run: |
+          set -eu
+          for f in from-staging rebuilt; do
+            p=build/notes/$f
+            [ -s "$p" ] || continue
+            {
+              echo "### $SUITE: build dependencies $f"
+              sed 's/^/- /' "$p"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Raspbian $f::$SUITE: $(grep -c . "$p") build dependencies $f (listed in the step summary)"
+          done
+
+      # A clean container of the suite: the package installs with only the
+      # suite's archive, Raspberry Pi's (for libpio0 where it has it) and
+      # this build's libraries, then runs.
+      - name: Install test
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          PLATFORM: ${{ steps.image.outputs.platform }}
+          SUITE: ${{ matrix.target.suite }}
+          TOOL: ${{ matrix.tool }}
+          TRACK: ${{ matrix.track }}
+        run: |
+          docker run --rm --platform "$PLATFORM" \
+            -v "$GITHUB_WORKSPACE:/work:ro" -w /work -e REPO=/work \
+            -e SUITE -e LIBS_DIR=/work/built-libs -e DEBS_DIR=/work/built-debs \
+            "$IMAGE" sh -ec 'packaging/install-test.sh "$0" "$1"' "$TOOL" "$TRACK"
+
+      # Debug symbols over 10 MB stay out of the apt repository (see deb.yml);
+      # its release job still publishes them. built-debs/ is root's (the
+      # build ran in a container), hence sudo.
       - name: Set aside debug symbols too large for the apt repository
         run: |
           set -eu
@@ -106,17 +274,18 @@ jobs:
             fi
           done
 
-      # publish-apt takes the suite from the longest configured suite the name
-      # starts with after "debs-"; anything after "debs-<suite>-<arch>" only
-      # keeps the artifact names distinct.
-      - uses: actions/upload-artifact@v4
+      - name: Upload
+        uses: actions/upload-artifact@v7
         with:
-          name: debs-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
+          name: debs-${{ matrix.target.suite }}-${{ matrix.target.arch }}-${{ matrix.tool }}-${{ matrix.track }}
           path: built-debs/*.deb
           if-no-files-found: error
+          retention-days: 14
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload the debug symbols
+        uses: actions/upload-artifact@v7
         with:
-          name: dbgsym-${{ matrix.suite }}-${{ matrix.arch }}-${{ matrix.tool }}-${{ matrix.track }}
+          name: dbgsym-${{ matrix.target.suite }}-${{ matrix.target.arch }}-${{ matrix.tool }}-${{ matrix.track }}
           path: built-dbgsym/*.deb
           if-no-files-found: ignore
+          retention-days: 14

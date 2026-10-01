@@ -1,11 +1,11 @@
-name: Debian packages + apt repository
+name: Debian packages
 
 # Every push to main builds openfpgaloader-fpgasonline[-git] and
-# openocd-fpgasonline[-git] for each supported suite and architecture,
-# together with the shared librp1jtag0 (and, where Raspberry Pi's archive has
-# none, libpio0) they depend on, then publishes one signed flat apt
-# repository per suite to this repository's GitHub Pages through
-# mithro/apt-repo-action:
+# openocd-fpgasonline[-git] for each suite and architecture in
+# .github/apt-packaging.toml, together with the shared librp1jtag0 (and,
+# where Raspberry Pi's archive has none, libpio0) they depend on, then
+# publishes one signed flat apt repository per suite to this repository's
+# GitHub Pages through mithro/apt-repo-action's publish-apt.yml:
 #
 #   deb [signed-by=/etc/apt/keyrings/fpgas.online-fpga-tools.gpg] \
 #       https://fpgas.online/fpgas.online-fpga-tools/<suite>/ ./
@@ -16,11 +16,13 @@ name: Debian packages + apt repository
 # leaves out -dbgsym packages over 10 MB (openFPGALoader's, ~20 MB each; they
 # were 79% of it), so the Pages site has room to keep earlier versions.
 #
-# Pull requests build everything and publish nothing.
+# Pull requests build everything, versioned below main (~pr<P>), and publish
+# nothing.
 #
-# arm64 and armhf only: the point of these builds is the Raspberry Pi fleet
-# (the RP1 PIO driver has nothing to drive elsewhere). bookworm is built as
-# well as trixie/sid because the fpgas.online Pi NFS root is still bookworm.
+# arm64 and armhf only, and the Raspbian suites: the point of these builds is
+# the Raspberry Pi fleet (the RP1 PIO driver has nothing to drive elsewhere).
+# bookworm is built as well because the fpgas.online Pi NFS root and the
+# NeTV2 hosts still run it.
 #
 # The builds are build-debs.yml, which daily.yml also calls for candidate
 # pins; only this workflow publishes.
@@ -38,32 +40,64 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request cancels that PR's older run. Every other
-# run (main, dispatches) gets a group of its own: a shared group would drop
-# a queued publish, which pending-run replacement does even without
-# cancel-in-progress.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  group: deb-${{ github.ref }}
+  # A newer push to a pull request cancels the older build. On the default
+  # branch a running publish is never cancelled: the newest push waits for it,
+  # and replaces any older push still waiting (it contains that one's commits).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
+  # The tooling, and every patch series applying to its pinned upstream with
+  # both tracks in step.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # fpgatools version needs the series tags
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --quiet
+      - run: uv run ruff check
+      - run: uv run pytest -q
+      - run: shellcheck packaging/*.sh packaging/static/*.sh
+      - name: Version strings for this commit
+        run: |
+          for tool in openfpgaloader openocd; do
+            for track in stable master; do
+              echo "$tool/$track: $(uv run fpgatools version $tool $track)"
+            done
+          done
+      - name: Fetch the pinned upstreams and apply the series
+        run: |
+          set -eu
+          for tool in openfpgaloader openocd; do
+            for track in stable master; do
+              uv run fpgatools apply "$tool" "$track"
+            done
+            uv run fpgatools compare "$tool"
+          done
+
+  build-deb:
+    needs: test
     uses: ./.github/workflows/build-debs.yml
     with:
       ref: ${{ inputs.ref }}
 
   release:
-    name: every package to the build's release
-    if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: build
+    name: release
+    if: inputs.ref == '' && github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+    # After the publish: a build whose apt repository didn't deploy isn't
+    # released either.
+    needs: [build-deb, publish-apt]
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the build's release and upload assets
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # the build's version comes from git describe
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --quiet
       # One directory per artifact: debs-* (what the apt repository gets,
       # the shared libraries included) and dbgsym-* (what it leaves out).
@@ -79,7 +113,7 @@ jobs:
       # which suite (the longest one it starts with, as in publish-apt).
       - name: Name each package by its suite
         env:
-          SUITES: bookworm trixie sid
+          SUITES: bookworm trixie forky sid raspbian-bookworm raspbian-trixie raspbian-forky
         run: |
           set -eu
           mkdir release
@@ -95,7 +129,12 @@ jobs:
               exit 1
             fi
             for f in "$d"*.deb; do
-              out="release/${suite}_$(basename "$f")"
+              # Named as GitHub will store it (mithro/apt-repo-action
+              # docs/packaging.md, "GitHub Releases"): it rewrites ~ and any
+              # other character but letters, digits and . _ + - to a dot.
+              # release.py then finds what is already uploaded by name, so a
+              # re-run doesn't upload the same file again.
+              out="release/$(printf '%s' "${suite}_$(basename "$f")" | sed 's/[^A-Za-z0-9._+-]/./g')"
               if [ -e "$out" ]; then
                 echo "::error::two builds produced $out"
                 exit 1
@@ -109,21 +148,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: uv run python packaging/release.py --assets release --build-release
 
-  publish:
+  publish-apt:
+    if: inputs.ref == '' && github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+    needs: build-deb
     # Scoped to this job alone: a job calling a reusable workflow sets the
     # maximum permissions available to it. build-debs.yml never sees these.
     permissions:
       contents: read
       pages: write
       id-token: write
-    if: inputs.ref == '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: build
-    # Pinned by commit: this job hands the signing key to the called workflow.
-    # main was ece43dd on 2026-09-24; bump deliberately.
-    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@ece43dd05997c5cc7f7852af084f319431147ca8
+    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@main
     with:
-      suites: "bookworm trixie sid"
-      architectures: "arm64 armhf"
+      suites: "bookworm trixie forky sid raspbian-bookworm raspbian-trixie raspbian-forky"
       description: "fpgas.online builds of openFPGALoader and OpenOCD (RP1 PIO JTAG, NeTV2, Tiny Tapeout FPGA board, SPI flash info)"
       # Earlier versions are kept up to the default size-limit-mb (900).
     secrets:

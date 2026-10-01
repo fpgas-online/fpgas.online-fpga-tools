@@ -22,6 +22,7 @@ from fpgatools.cli import FpgatoolsError
 from fpgatools.gitutil import run_git
 from fpgatools.pins import Pins, load
 from fpgatools.version import (
+    check_debian_version,
     library_version,
     package_version,
     repo_version,
@@ -76,11 +77,16 @@ class Substitutions:
         }
 
 
-def substitutions(tool: str, track: str, pins: Pins, repo_ver: str) -> Substitutions:
+def substitutions(
+    tool: str, track: str, pins: Pins, repo_ver: str, version: str | None = None
+) -> Substitutions:
+    """`version`: the shared deb-version.py's, suffixes included (CI); by
+    default fpgatools' own, which has none (a local build)."""
     pin = pins.pin(tool, track)
+    derived = package_version(tool, track, pins, repo_ver)
     return Substitutions(
         package=package_name(tool, track),
-        version=package_version(tool, track, pins, repo_ver),
+        version=derived if version is None else check_debian_version(version, derived),
         track=track,
         conflicts=", ".join(sibling_packages(tool, track)),
         upstream_url=pins.url(tool),
@@ -153,12 +159,13 @@ def render(
     *,
     templates_root: Path = TEMPLATES_ROOT,
     date_rfc2822: str | None = None,
+    version: str | None = None,
 ) -> Path:
     """Write <dest>/debian/ from the templates; returns the debian/ directory."""
     src = templates_root / tool
     if not src.is_dir():
         raise FpgatoolsError(f"no debian templates for '{tool}' under {templates_root}")
-    subs = substitutions(tool, track, pins, repo_ver)
+    subs = substitutions(tool, track, pins, repo_ver, version)
     debian = dest / "debian"
     debian.mkdir(parents=True, exist_ok=True)
     _write_templates(src, debian, subs)
@@ -166,11 +173,14 @@ def render(
     return debian
 
 
-def library_substitutions(name: str, pins: Pins, repo_ver: str) -> dict[str, str]:
+def library_substitutions(
+    name: str, pins: Pins, repo_ver: str, version: str | None = None
+) -> dict[str, str]:
     pin = pins.pin(name)
+    derived = library_version(name, pins, repo_ver)
     return {
         "@SOURCE@": LIB_SOURCE[name],
-        "@VERSION@": library_version(name, pins, repo_ver),
+        "@VERSION@": derived if version is None else check_debian_version(version, derived),
         "@UPSTREAM_URL@": pins.url(name),
         "@UPSTREAM_REF@": pin.ref,
         "@UPSTREAM_COMMIT@": pin.commit[:12],
@@ -185,6 +195,7 @@ def render_library(
     *,
     templates_root: Path = TEMPLATES_ROOT,
     date_rfc2822: str | None = None,
+    version: str | None = None,
 ) -> Path:
     """Write <dest>/debian/ for a library; returns the debian/ directory.
 
@@ -197,7 +208,7 @@ def render_library(
     src = templates_root / name
     if not src.is_dir():
         raise FpgatoolsError(f"no debian templates for '{name}' under {templates_root}")
-    subs = library_substitutions(name, pins, repo_ver)
+    subs = library_substitutions(name, pins, repo_ver, version)
     debian = dest / "debian"
     if debian.exists():
         shutil.rmtree(debian)
@@ -225,9 +236,9 @@ def _cmd(args: argparse.Namespace) -> int:
                 f"{args.name} needs --dest: a copy of build/src/{args.name}, never the fetch itself"
             )
         dest = Path(args.dest)
-        debian = render_library(args.name, pins, repo_version(), dest)
-        version = library_version(args.name, pins, repo_version())
-        print(f"{debian}: {LIB_SOURCE[args.name]} {version}")
+        debian = render_library(args.name, pins, repo_version(), dest, version=args.version)
+        subs = library_substitutions(args.name, pins, repo_version(), args.version)
+        print(f"{debian}: {LIB_SOURCE[args.name]} {subs['@VERSION@']}")
         return 0
     if args.track is None:
         raise FpgatoolsError(f"{args.name} needs a track ({', '.join(TRACKS)})")
@@ -235,8 +246,8 @@ def _cmd(args: argparse.Namespace) -> int:
     dest = Path(args.dest) if args.dest else src_dir(tool, track)
     if not dest.is_dir():
         raise FpgatoolsError(f"{dest} does not exist: run `fpgatools apply {tool} {track}`")
-    debian = render(tool, track, pins, repo_version(), dest)
-    subs = substitutions(tool, track, pins, repo_version())
+    debian = render(tool, track, pins, repo_version(), dest, version=args.version)
+    subs = substitutions(tool, track, pins, repo_version(), args.version)
     print(f"{debian}: {subs.package} {subs.version}")
     return 0
 
@@ -252,5 +263,11 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
         "--dest",
         help="tree to write debian/ into (tools: default build/src/<tool>-<track>;"
         " libraries: required, a copy of build/src/<name>)",
+    )
+    p.add_argument(
+        "--version",
+        help="the Debian version, from the shared deb-version.py (CI passes it, with its"
+        " ~deb<N>/~pr<P> suffixes); it must be fpgatools' own version plus suffixes."
+        " Default: fpgatools' own, without suffixes",
     )
     p.set_defaults(func=_cmd)

@@ -100,6 +100,15 @@ def test_suite_named_debs_are_assets_but_not_indexed():
     assert release.latest_index([A, DBG]) == release.latest_index([A])
 
 
+def test_debs_named_as_github_stores_them_are_assets():
+    # deb.yml turns ~ (and anything else GitHub rewrites) into a dot before
+    # uploading, so the local name is the stored one.
+    assert release.is_asset("raspbian-forky_openocd-fpgasonline_"
+                            "0.12.0+fpgasonline.0.0.post91.deb14.pr13_armhf.deb")
+    assert release.is_asset("bookworm_librp1jtag0_"
+                            "0.1.0.post5+fpgasonline.0.0.post80.deb12_arm64.deb")
+
+
 def test_collect_assets_takes_dbgsym_debs(tmp_path: Path):
     (tmp_path / "dbgsym-bookworm-arm64-openfpgaloader-stable").mkdir()
     (tmp_path / "dbgsym-bookworm-arm64-openfpgaloader-stable" / DBG).write_text("x")

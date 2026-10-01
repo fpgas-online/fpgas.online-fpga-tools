@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from fpgatools import debianize
+from fpgatools import debianize, version
 from fpgatools.cli import FpgatoolsError
 from fpgatools.pins import load
 
@@ -66,6 +66,46 @@ def test_render(tmp_path: Path, pins, tool, track, expect_pkg, expect_ver, expec
     assert "control.in" not in {p.name for p in debian.iterdir()}
 
 
+def test_render_takes_the_shared_version(tmp_path: Path, pins):
+    """CI passes the shared deb-version.py's version: fpgatools' own plus the
+    suite and pull request suffixes. It goes into the changelog as it is; the
+    binary's own version string stays the unsuffixed one."""
+    v = "1.1.1+fpgasonline.0.0.post12~deb13~pr7"
+    debian = debianize.render("openfpgaloader", "stable", pins, "0.0.post12", tmp_path,
+                              date_rfc2822=DATE, version=v)
+    first = (debian / "changelog").read_text().splitlines()[0]
+    assert first == f"openfpgaloader-fpgasonline ({v}) unstable; urgency=medium"
+    assert "v1.1.1+fpgasonline.0.0.post12" in (debian / "rules").read_text()
+
+
+@pytest.mark.parametrize(
+    "given",
+    [
+        "1.1.1+fpgasonline.0.0.post13~deb13",  # another repo version
+        "1.1.2+fpgasonline.0.0.post12",  # another upstream version
+        "1.1.1+fpgasonline.0.0.post12.1",  # not a ~ suffix
+    ],
+)
+def test_render_refuses_a_version_that_disagrees(tmp_path: Path, pins, given):
+    with pytest.raises(FpgatoolsError, match="disagree"):
+        debianize.render("openfpgaloader", "stable", pins, "0.0.post12", tmp_path,
+                         date_rfc2822=DATE, version=given)
+
+
+def test_render_library_takes_the_shared_version(tmp_path: Path, pins):
+    upstream = version.library_upstream_version("rp1jtag", pins)
+    v = f"{upstream}+fpgasonline.0.0.post43~deb12"
+    debian = debianize.render_library("rp1jtag", pins, "0.0.post43",
+                                      _lib_tree(tmp_path, "rp1jtag"), date_rfc2822=DATE,
+                                      version=v)
+    first = (debian / "changelog").read_text().splitlines()[0]
+    assert first == f"rp1-jtag-fpgasonline ({v}) unstable; urgency=medium"
+    with pytest.raises(FpgatoolsError, match="disagree"):
+        debianize.render_library("rp1jtag", pins, "0.0.post43",
+                                 _lib_tree(tmp_path / "again", "rp1jtag"), date_rfc2822=DATE,
+                                 version=f"{upstream}+fpgasonline.0.0.post44")
+
+
 def test_unsubstituted_token_is_an_error(tmp_path: Path, pins):
     templates = tmp_path / "templates" / "openocd"
     templates.mkdir(parents=True)
@@ -103,7 +143,7 @@ def _lib_tree(tmp_path: Path, name: str) -> Path:
         ("rp1jtag", "rp1-jtag-fpgasonline", ["librp1jtag0", "librp1jtag-dev"],
          r"0\.0\.post\d+\+fpgasonline\.0\.0\.post43"),
         ("piolib", "piolib-fpgasonline", ["libpio0", "libpio-dev"],
-         r"20\d{6}\+fpgasonline\.0\.0\.post43\.g[0-9a-f]{7}"),
+         r"20\d{6}\+fpgasonline\.0\.0\.post43"),
     ],
 )
 def test_render_library(tmp_path: Path, pins, name, source, packages, version_re):

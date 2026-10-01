@@ -8,7 +8,7 @@ name: Daily upstream bump
 #                 the auto/pin-candidate branch. When nothing moved, the
 #                 candidate is simply main's own commit, so the rest of the
 #                 run is still a full daily rebuild of what the fleet has.
-#   2. verify     the whole deb matrix (6 library + 24 tool jobs) and the
+#   2. verify     the whole deb matrix (11 library + 44 tool jobs) and the
 #                 whole static matrix (12 jobs) against the candidate, through
 #                 build-debs.yml and build-static.yml. Those hold a read token
 #                 and have no publish job at all: a called workflow that asks
@@ -16,7 +16,7 @@ name: Daily upstream bump
 #                 run at startup, before any job or `if:` runs.
 #   3. promote    only when every build passed and a pin actually moved:
 #                 fast-forward main to the candidate commit, then dispatch
-#                 debs.yml and static.yml on main, which build again and
+#                 deb.yml and static.yml on main, which build again and
 #                 publish. The second build is deliberate: main is only ever
 #                 published from a run of its own.
 #   4. report     on any failure, open (or update) one issue naming the
@@ -148,7 +148,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          gh workflow run debs.yml --ref main
+          gh workflow run deb.yml --ref main
           gh workflow run static.yml --ref main
 
   report:

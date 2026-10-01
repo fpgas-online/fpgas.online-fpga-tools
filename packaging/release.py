@@ -18,7 +18,7 @@ Debian package of the build, debug symbols included, and the static
 tarballs, so each build is complete in one place (a release holds at most
 1000 assets; the rolling series release would fill up). The .debs are named
 <suite>_<file>.deb because every suite's build produces the same Debian
-filename. debs.yml and static.yml both upload to it, whichever finishes
+filename. deb.yml and static.yml both upload to it, whichever finishes
 first creating it, and neither touches latest.json there. The tag must not
 start with v<digit>: repo_version()'s git describe would take it for a
 series tag.
@@ -163,7 +163,7 @@ def ensure_release(tag: str, title: str, notes: str, dry_run: bool, target: str 
     if target:
         create += ["--target", target]
     r = subprocess.run(create, capture_output=True, text=True)
-    # debs.yml and static.yml both create a build's release; one of them loses.
+    # deb.yml and static.yml both create a build's release; one of them loses.
     if r.returncode != 0 and subprocess.run(view, capture_output=True).returncode != 0:
         sys.exit(f"{' '.join(create)}\n{r.stderr.strip()}")
 
