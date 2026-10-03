@@ -35,9 +35,9 @@ commit = "9ea7f3d647c8ecf6b0f1424002dfc3f4504a162c"
 
 [openocd.master]
 ref = "master"
-commit = "9ce48f20ba2c49646b9ad690ceb2b7a85c77cbd2"
-describe = "v0.12.0-1714-g9ce48f20"
-date = "2026-10-01"
+commit = "d3ebb8d2b9adbfd9a13072e8e446f424b5ff3c0e"
+describe = "v0.12.0-1717-gd3ebb8d2"
+date = "2026-10-02"
 
 # librp1jtag: the RP1 PIO JTAG library both tools' rp1pio drivers call.
 # Packaged here as the shared librp1jtag0 / librp1jtag-dev the Debian tool
@@ -59,6 +59,6 @@ describe = "v0.0-107-g6f50b13"
 [piolib]
 url = "https://github.com/raspberrypi/utils.git"
 ref = "master"
-commit = "313407c9ca8654a6f30ddef25eae9cc283a343c8"
-date = "2026-10-01"
+commit = "e0484c848f9c9d1aecc7bd0738930db97bcf18df"
+date = "2026-10-02"
 subdir = "piolib"
