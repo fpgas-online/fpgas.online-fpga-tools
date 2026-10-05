@@ -22,9 +22,9 @@ commit = "85be4fa02b2dd6a83716d7dfac3d25bbd260ff7b"
 
 [openfpgaloader.master]
 ref = "master"
-commit = "676e53ec73d2261c974d610b7cf0693117c8d2ef"
-describe = "v1.1.1-179-g676e53e"
-date = "2026-09-23"
+commit = "efb64ff5181c716267f098acd03f2daa57f6daba"
+describe = "v1.1.1-180-gefb64ff"
+date = "2026-10-05"
 
 [openocd]
 url = "https://github.com/openocd-org/openocd.git"
@@ -35,9 +35,9 @@ commit = "9ea7f3d647c8ecf6b0f1424002dfc3f4504a162c"
 
 [openocd.master]
 ref = "master"
-commit = "d3ebb8d2b9adbfd9a13072e8e446f424b5ff3c0e"
-describe = "v0.12.0-1717-gd3ebb8d2"
-date = "2026-10-02"
+commit = "8da0578d7bce3e134821ccf10911182788debc32"
+describe = "v0.12.0-1728-g8da0578d"
+date = "2026-10-04"
 
 # librp1jtag: the RP1 PIO JTAG library both tools' rp1pio drivers call.
 # Packaged here as the shared librp1jtag0 / librp1jtag-dev the Debian tool
