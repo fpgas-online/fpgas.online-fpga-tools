@@ -22,8 +22,8 @@ commit = "85be4fa02b2dd6a83716d7dfac3d25bbd260ff7b"
 
 [openfpgaloader.master]
 ref = "master"
-commit = "efb64ff5181c716267f098acd03f2daa57f6daba"
-describe = "v1.1.1-180-gefb64ff"
+commit = "bf2b52916e7b6216ba1cc0b30933827d7735b05d"
+describe = "v1.1.1-182-gbf2b529"
 date = "2026-10-05"
 
 [openocd]
