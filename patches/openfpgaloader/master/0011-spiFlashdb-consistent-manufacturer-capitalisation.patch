@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Mon, 21 Sep 2026 19:23:31 +0930
-Subject: [PATCH 11/32] spiFlashdb: consistent manufacturer capitalisation
+Subject: [PATCH 11/33] spiFlashdb: consistent manufacturer capitalisation
 
 "micron", "spansion" and "microchip" were lower case while every other
 manufacturer (Macronix, Winbond, ISSI, ...) is capitalised, so the
@@ -29,7 +29,7 @@ index b6e5066..70d2dfc 100644
         "part": "S25FL256S", "size_bytes": 33554432, "size_source": "database",
         "unique_id": {"state": "read", "value": "e2789916a0809a22bbc76634c1bf53ed",
 diff --git a/src/spiFlashdb.hpp b/src/spiFlashdb.hpp
-index 8ca858d..e6bdf0f 100644
+index 1bac9c7..763d71b 100644
 --- a/src/spiFlashdb.hpp
 +++ b/src/spiFlashdb.hpp
 @@ -39,7 +39,7 @@ typedef struct {

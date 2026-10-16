@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Mon, 16 Mar 2026 17:46:27 +1030
-Subject: [PATCH 26/32] tt_fpga: add board and cable definitions for TT FPGA
+Subject: [PATCH 26/33] tt_fpga: add board and cable definitions for TT FPGA
  Demo Board
 
 Add COMM_TT_MICROPYTHON communication mode, TT_BOARD() macro, and
@@ -17,7 +17,7 @@ Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
  2 files changed, 13 insertions(+), 3 deletions(-)
 
 diff --git a/src/board.hpp b/src/board.hpp
-index de12b26..5f066a1 100644
+index a250574..c926a6e 100644
 --- a/src/board.hpp
 +++ b/src/board.hpp
 @@ -64,9 +64,10 @@ typedef struct {
@@ -43,7 +43,7 @@ index de12b26..5f066a1 100644
  
  static std::map <std::string, target_board_t> board_list = {
  	JTAG_BOARD("ac701",           "xc7a200tfbg676",       "digilent",     SPI_FLASH, 0, 0, CABLE_DEFAULT),
-@@ -260,6 +263,9 @@ static std::map <std::string, target_board_t> board_list = {
+@@ -262,6 +265,9 @@ static std::map <std::string, target_board_t> board_list = {
  	JTAG_BOARD("tangprimer25k",   "",                     "ft2232",       SPI_FLASH, 0, 0, CABLE_DEFAULT),
  	JTAG_BOARD("tangmega138k",    "",                     "ft2232",       SPI_FLASH, 0, 0, CABLE_DEFAULT),
  	JTAG_BOARD("te0712_8",        "xc7a200tfbg484",       "",             SPI_FLASH, 0, 0, CABLE_MHZ(15)),
