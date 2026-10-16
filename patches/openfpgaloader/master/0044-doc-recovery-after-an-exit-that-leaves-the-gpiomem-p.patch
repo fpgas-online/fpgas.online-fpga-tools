@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Sat, 17 Oct 2026 04:21:12 +1030
-Subject: [PATCH 44/44] doc: recovery after an exit that leaves the gpiomem
+Subject: [PATCH 44/46] doc: recovery after an exit that leaves the gpiomem
  pins driven
 
 Put every line the load drives back to an input (fomu_evt_header:

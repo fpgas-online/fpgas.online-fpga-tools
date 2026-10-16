@@ -1,0 +1,170 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Sat, 17 Oct 2026 04:53:20 +1030
+Subject: [PATCH 45/46] gpiomem: calibrate and check cpufreq before anything is
+ read or driven
+
+Ice40SpiSlaveInterface gains prepare(), called first by the load, before the
+CDONE read, CRESET_B low and the bus. GpiomemIce40Spi calibrates there: the
+cpufreq reads, the zero-mask timing and the 1 us-at-minimum-clock check. A
+host that can never load now stops with the Fomu's running design untouched,
+so "nothing is driven" in those messages is true. Calibration is still not in
+the span Ice40 times for the image.
+
+The cpufreq stop says what to check (the kernel's cpufreq driver) and that
+there is no override, and that Pi 1/Zero behaviour is unverified. When the
+restore leaves a pin driven and CRESET_B low, the destructor gives the
+recovery with the board's own pin numbers. The comment says the phases are
+sized for 25 ns, the loop's overhead counted as write time.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JG8Wtod8kFmcquwN34pFCa
+---
+ src/gpiomemIce40Spi.cpp        | 35 +++++++++++++++++++++++-----------
+ src/gpiomemIce40Spi.hpp        |  6 ++++--
+ src/ice40.cpp                  |  6 ++++++
+ src/ice40SpiSlaveInterface.hpp |  7 +++++++
+ 4 files changed, 41 insertions(+), 13 deletions(-)
+
+diff --git a/src/gpiomemIce40Spi.cpp b/src/gpiomemIce40Spi.cpp
+index 4d81697..a79ed96 100644
+--- a/src/gpiomemIce40Spi.cpp
++++ b/src/gpiomemIce40Spi.cpp
+@@ -60,8 +60,9 @@
+ #define GPIO_PINS			32	/* GPSET0, GPCLR0, GPLEV0 */
+ #define GPIO_PAGE			4096	/* /dev/gpiomem maps one page */
+ 
+-/* every SPI_SCK phase is held at 25 ns or more, hence every period at 50 ns
+- * or more (at or under 20 MHz): the data sheet's SPI_SCK high and low
++/* every SPI_SCK phase is sized for 25 ns or more, hence every period for
++ * 50 ns or more (at or under 20 MHz); the loop's own overhead is counted as
++ * write time, so a real phase may be a few ns shorter than sized: the data sheet's SPI_SCK high and low
+  * times are 20 ns or more and its maximum is 25 MHz (DS-02008 Table 4.24
+  * tCCLKH, tCCLKL, fMAX). Nothing measures the slew at the pad.
+  */
+@@ -89,7 +90,11 @@ static double read_khz(const std::string &path)
+ 	if (!f)
+ 		throw std::runtime_error("cannot read " + path + ": " +
+ 			strerror(errno) + ": the CPU clock is unknown, so SPI_SCK "
+-			"cannot be held to the iCE40's limits; nothing is driven");
++			"cannot be held to the iCE40's limits; nothing is driven. This "
++			"load sizes its clock padding from cpufreq and has no override: "
++			"is the kernel's cpufreq driver loaded and exposing "
++			"/sys/devices/system/cpu/cpu0/cpufreq? (Whether Pi 1 and Zero "
++			"images provide it is unverified.)");
+ 	double khz = 0;
+ 	int n = fscanf(f, "%lf", &khz);
+ 	fclose(f);
+@@ -234,9 +239,17 @@ GpiomemIce40Spi::~GpiomemIce40Spi()
+ 		stuck.push_back(e.what());
+ 	}
+ 	int bad = restore_functions();
+-	if (bad)
++	if (bad) {
++		std::string lines;
++		for (int pin : _bus)
++			lines += std::to_string(pin) + ",";
+ 		stuck.push_back(std::to_string(bad) + " pin(s) did not read back "
+-			"as their saved function: they may still be driven");
++			"as their saved function: they may still be driven and CRESET_B "
++			"may be held low. Recover: pinctrl set " + lines +
++			std::to_string(_pins.creset) + " ip (CRESET_B last), then "
++			"pinctrl get " + std::to_string(_pins.cdone) + " must show CDONE "
++			"high; if it stays low, power-cycle the board");
++	}
+ 	for (const std::string &s : stuck)
+ 		printError("gpiomem iCE40 SPI: " + s);
+ }
+@@ -360,11 +373,11 @@ static uint32_t shift_bits(Ice40GpioRegs *regs,
+ 	return nbits;
+ }
+ 
+-void GpiomemIce40Spi::take_bus()
++void GpiomemIce40Spi::prepare()
+ {
+-	Ice40GpioSpi::take_bus();
+-	/* here, with the bus ours and nothing sent yet: Ice40 times the
+-	 * image from its first write, so calibration is not in that time
++	/* first of all, before any line is read or driven: Ice40 times the
++	 * image from its first write, so calibration is not in that time, and
++	 * a host that cannot load stops here with the board untouched
+ 	 */
+ 	calibrate();
+ }
+@@ -451,7 +464,7 @@ void GpiomemIce40Spi::write(const uint8_t *data, uint32_t len)
+ 	if (!_outputs.count(_pins.sck) || !_outputs.count(_pins.si))
+ 		throw std::runtime_error("SPI_SCK and SPI_SI are not driven");
+ 	if (!_calibrated)
+-		throw std::logic_error("write before take_bus() calibrated the clock");
++		throw std::logic_error("write before prepare() calibrated the clock");
+ 	uint32_t sent = shift_bits(_regs.get(), abort_flag(), data,
+ 		len * 8, 1u << _pins.sck, 1u << _pins.si, _pad_spins);
+ 	/* SPI_SCK is low at every bit boundary; SPI_SI is the last bit sent */
+@@ -468,7 +481,7 @@ void GpiomemIce40Spi::write(const uint8_t *data, uint32_t len)
+ void GpiomemIce40Spi::clocks(uint32_t nclk)
+ {
+ 	if (!_calibrated)
+-		throw std::logic_error("clocks before take_bus() calibrated the clock");
++		throw std::logic_error("clocks before prepare() calibrated the clock");
+ 	set(_pins.si, true);
+ 	uint32_t sent = shift_bits(_regs.get(), abort_flag(), NULL, nclk,
+ 		1u << _pins.sck, 1u << _pins.si, _pad_spins);
+diff --git a/src/gpiomemIce40Spi.hpp b/src/gpiomemIce40Spi.hpp
+index 94ad542..fffc52f 100644
+--- a/src/gpiomemIce40Spi.hpp
++++ b/src/gpiomemIce40Spi.hpp
+@@ -131,7 +131,9 @@ class GpiomemRegs : public Ice40GpioRegs {
+  * loop is padded so that every SCK phase is at least 25 ns, every period at
+  * least 50 ns (so at or under 20 MHz), against the data sheet's 20 ns
+  * minimum SCK high and low time and 25 MHz maximum (DS-02008 Table 4.24
+- * tCCLKH, tCCLKL, fMAX). The padding is calibrated once, in take_bus(), with
++ * tCCLKH, tCCLKL, fMAX). The padding is calibrated once, in prepare() (before
++ * any line is read or driven, so a host that cannot load stops with the
++ * Fomu's design running), with
+  * zero-mask writes (no pin moves), at the CPU clock cpufreq reports, and
+  * scaled to the CPU's maximum clock: every cost measured is taken to be
+  * CPU-bound, so at the maximum clock it is shorter by cur/max and the pad
+@@ -159,7 +161,7 @@ class GpiomemIce40Spi : public Ice40GpioSpi {
+ 			std::unique_ptr<Ice40GpioRegs> regs, int8_t verbose);
+ 		~GpiomemIce40Spi();
+ 
+-		void take_bus() override;
++		void prepare() override;
+ 		void write(const uint8_t *data, uint32_t len) override;
+ 		void clocks(uint32_t nclk) override;
+ 
+diff --git a/src/ice40.cpp b/src/ice40.cpp
+index 7a6861e..3aae47c 100644
+--- a/src/ice40.cpp
++++ b/src/ice40.cpp
+@@ -281,6 +281,12 @@ void Ice40::program_cram_slave(const uint8_t *data, uint32_t length)
+ 		Ice40SpiSlaveInterface *slave;
+ 	} abort_flag(_slave);
+ 
++	/* the backend settles what needs no line (its clock, its limits)
++	 * before anything is read or driven: a host that can never load stops
++	 * here with the running design untouched
++	 */
++	_slave->prepare();
++
+ 	/* CDONE must be high first: an iCE40 holding a design. If it is
+ 	 * already low, CDONE low under CRESET_B proves nothing, and the SPI
+ 	 * lines are not driven.
+diff --git a/src/ice40SpiSlaveInterface.hpp b/src/ice40SpiSlaveInterface.hpp
+index 4023f65..d526d9b 100644
+--- a/src/ice40SpiSlaveInterface.hpp
++++ b/src/ice40SpiSlaveInterface.hpp
+@@ -73,6 +73,13 @@ class Ice40SpiSlaveInterface {
+ 			return _abort ? _abort : &none;
+ 		}
+ 
++		/*!
++		 * \brief called first by the load, before anything is read or driven:
++		 *        whatever a backend must settle without touching a line
++		 *        (a host that can never load stops here, with the board's
++		 *        running design untouched). Throws if the load cannot go on.
++		 */
++		virtual void prepare() {}
+ 		/*!
+ 		 * \brief CRESET_B
+ 		 * \param[in] hold: true: driven low (the iCE40 in reset, its SPI
