@@ -53,6 +53,8 @@ openfpgaloader)
 	need "$src/build/boards.txt" "tt_fpga" "tt_fpga board"
 	need "$src/build/boards.txt" "fomu_evt_header" "fomu_evt_header board"
 	"$bin" --help | grep -q -- "--flash-info" || fail "--flash-info option missing"
+	# the iCE40 SPI slave load against a model of the iCE40 (no GPIO)
+	"$(dirname "$0")/tests/ice40-slave-model.sh" "$src"
 	;;
 openocd)
 	rp1flag=--disable-rp1-pio-jtag
