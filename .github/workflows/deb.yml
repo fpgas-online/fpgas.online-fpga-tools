@@ -60,7 +60,7 @@ jobs:
       - run: uv sync --quiet
       - run: uv run ruff check
       - run: uv run pytest -q
-      - run: shellcheck packaging/*.sh packaging/static/*.sh
+      - run: shellcheck packaging/*.sh packaging/static/*.sh packaging/tests/*.sh
       - name: Version strings for this commit
         run: |
           for tool in openfpgaloader openocd; do
