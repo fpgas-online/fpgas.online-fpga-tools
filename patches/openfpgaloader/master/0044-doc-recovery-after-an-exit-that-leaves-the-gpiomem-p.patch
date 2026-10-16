@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Sat, 17 Oct 2026 04:21:12 +1030
+Subject: [PATCH 44/44] doc: recovery after an exit that leaves the gpiomem
+ pins driven
+
+Put every line the load drives back to an input (fomu_evt_header:
+pinctrl set 8,9,10,11,25,27 ip; --pins overrides the list), which lets
+CRESET_B go and the board's pull-up boot the iCE40 from its flash; check
+CDONE (GPIO17) is high again; if it stays low, power-cycle the board. The
+earlier text said the Fomu's header check pulses CRESET_B: it reads CDONE
+first and drives nothing while CDONE is low, so it does not recover the board.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JG8Wtod8kFmcquwN34pFCa
+---
+ doc/vendors/lattice.rst | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/doc/vendors/lattice.rst b/doc/vendors/lattice.rst
+index 3f2c44d..c83a95b 100644
+--- a/doc/vendors/lattice.rst
++++ b/doc/vendors/lattice.rst
+@@ -125,9 +125,17 @@ load through /dev/gpiomem registers: ...``):
+     held in reset) and the SPI lines out, until they are put back: SIGKILL,
+     SIGSEGV, SIGBUS, SIGABRT, ``abort()``, ``std::terminate()``, ``exit()`` or
+     ``_exit()`` called from elsewhere. libgpiod gives its lines back when
+-    the process dies; this path does not. Recover with ``pinctrl set <n> ip``
+-    for the lines and a pulse on CRESET_B so that the iCE40 boots its flash
+-    (the Fomu's header check on the fpgas.online fleet pulses it).
++    the process dies; this path does not. To recover:
++
++    1. Put every line the load drives back to an input. That lets CRESET_B
++       go, and the board's pull-up then lets the iCE40 boot from its flash
++       (as the load itself relies on). For ``fomu_evt_header`` (SPI_SS 8,
++       SPI_SI 9, SPI_SO 10, SPI_SCK 11, /HOLD 25, CRESET_B 27) on a Pi 1-4:
++       ``pinctrl set 8,9,10,11,25,27 ip`` (``raspi-gpio set <n> ip`` on
++       older images, one pin at a time). With ``--pins`` the list is the
++       pins given, plus CRESET_B.
++    2. Check that CDONE (GPIO17) is high again: ``pinctrl get 17``.
++    3. If CDONE stays low, power-cycle the board.
+ 
+   The SPI_SCK period is padded to 50 ns or more, each phase to 25 ns or
+   more, so the clock is at or under 20 MHz; the data sheet allows 25 MHz and
