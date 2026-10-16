@@ -2,29 +2,32 @@
 
 Patched builds of [openFPGALoader](https://github.com/trabucayre/openFPGALoader)
 and [OpenOCD](https://openocd.org/) for the [fpgas.online](https://fpgas.online)
-Raspberry Pi images. This repository holds a maintained **patch series** for
-functionality that is not upstream yet, pins the upstream sources it applies
-to, and builds the result as Debian packages (a signed apt repository on
-GitHub Pages) and as static binaries (GitHub Releases), on two tracks:
+Raspberry Pi images. Functionality that is not upstream yet lives in
+[mithro/openFPGALoader](https://github.com/mithro/openFPGALoader) for
+openFPGALoader (one feature branch per feature, merged into an integration
+branch per track) and in a maintained **patch series** here for OpenOCD.
+This repository pins those sources and builds the result as Debian packages
+(a signed apt repository on GitHub Pages) and as static binaries (GitHub
+Releases), on two tracks:
 
 | Track | Upstream base | Debian packages |
 |---|---|---|
-| `stable` | latest upstream release tag | `openfpgaloader-fpgasonline`, `openocd-fpgasonline` |
-| `master` | upstream default branch, pinned to a commit | `openfpgaloader-fpgasonline-git`, `openocd-fpgasonline-git` |
+| `stable` | latest upstream release tag (openFPGALoader: the fork's [`fpgas-online/v1.1.1`](https://github.com/mithro/openFPGALoader/tree/fpgas-online/v1.1.1)) | `openfpgaloader-fpgasonline`, `openocd-fpgasonline` |
+| `master` | upstream default branch, pinned to a commit (openFPGALoader: the fork's [`fpgas-online/master`](https://github.com/mithro/openFPGALoader/tree/fpgas-online/master)) | `openfpgaloader-fpgasonline-git`, `openocd-fpgasonline-git` |
 
 The exact pins are in [`upstreams.toml`](upstreams.toml).
 
-## What the patches add
+## What the builds add
 
 | Feature | openFPGALoader | OpenOCD | Upstream status |
 |---|---|---|---|
-| **RP1 PIO JTAG** on a Raspberry Pi 5: the RP1's PIO block shifts data instead of bit-banging PCIe-attached GPIOs (rp1-jtag's benchmarks: 6.5 s instead of 39 s for a 3.8 MB Artix-7 bitstream) | `rp1pio` cable | `rp1_pio_jtag` adapter, `interface/raspberrypi-rp1-pio.cfg` | not upstream; drivers are the copies [mithro/rp1-jtag](https://github.com/mithro/rp1-jtag) ships; they call librp1jtag (the `librp1jtag0` package here, linked in statically in the static binaries) |
-| **Kosagi NeTV2** on a Pi header, old-style (Pi 1-4 `bcm2835gpio`) and new-style (Pi 5 RP1 PIO), plus `linuxgpiod`, a picker and a jtagspi flash variant | `netv2`, `netv2_100` boards with GPIO cable auto-detection | `board/netv2-rpi*.cfg` | openFPGALoader boards: [PR #643](https://github.com/trabucayre/openFPGALoader/pull/643) open |
-| **Tiny Tapeout FPGA Demo Board** (iCE40UP5K behind an RP2040/RP2350 running MicroPython) | `tt_fpga` board, `tt_micropython` cable | | not upstream ([mithro/openFPGALoader tt-fpga-support](https://github.com/mithro/openFPGALoader/tree/tt-fpga-support)) |
-| **iCE40 SRAM load over Raspberry Pi GPIO, untested on hardware** (SPI slave, TN-02001 Appendix A) for the Fomu EVT on a Pi header: the bitstream bit-banged on GPIO9 (SPI_SI, the Pi's MISO pin, which its SPI hardware cannot drive), CDONE checked before and after, the flash put in Deep Power-down and never written. On a Raspberry Pi 1-4 (`/proc/device-tree/compatible` names `brcm,bcm2835`, `2836`, `2837` or `2711`) the GPIO registers are written through `/dev/gpiomem`, with each pin's function saved and put back on every way out; the load stops loud, with no fall-back to libgpiod, if `/dev/gpiomem` is absent or closed to the user. Anywhere else (a Pi 5, `-d /dev/gpiochipN`) libgpiod drives the lines. **libgpiod cannot do it on a Pi 3 Model B+:** a trial on 17 Oct 2026 measured 0.440 MHz, under the iCE40's 1 MHz minimum slave configuration clock, so the load stopped and the board booted its flash again. The `/dev/gpiomem` path is not yet measured on hardware. A load that ends by error, SIGINT, SIGTERM, SIGHUP, SIGQUIT or SIGPIPE puts the pins back and leaves the board booting its flash, unless a pin does not read back: then CRESET_B stays low, the load says so and gives the recovery below. **Any other exit leaves the pins driven** (CRESET_B low, the iCE40 held in reset, SPI lines out), because `/dev/gpiomem` has no kernel cleanup: SIGKILL, SIGSEGV/SIGBUS, SIGABRT, `abort()`, `std::terminate()`, `exit()`/`_exit()` from elsewhere. To recover: (1) put every line the load drives back to an input, which lets CRESET_B go and the board's pull-up boot the iCE40 from its flash: for `fomu_evt_header` (SS 8, SI 9, SO 10, SCK 11, /HOLD 25, CRESET 27) `pinctrl set 8,9,10,11,25,27 ip` (`raspi-gpio set <n> ip` on older images; with `--pins`, the pins given plus CRESET_B, which goes in its own second command so the bus lines are inputs before the iCE40 leaves reset); (2) check CDONE is high again, `pinctrl get 17`, after which `fomu_header_id.py` can confirm the flash and foboot (it drives nothing while CDONE is low); (3) if CDONE stays low, power-cycle the board (on the fleet, the operator's PoE cycle). The next load refuses to start while a line is an output, and names it. The padding assumes posted register writes and is sized from cpufreq (the load stops before it drives anything if cpufreq cannot be read); the hardware trial measures the real edge spacing | `fomu_evt_header` board, `libgpiod` cable in SPI mode | | not upstream ([mithro/openFPGALoader fpgas-online/ice40-gpio-spi-sram](https://github.com/mithro/openFPGALoader/tree/fpgas-online/ice40-gpio-spi-sram); #19) |
-| **SPI flash info and unique ID**: JEDEC id, SFDP parameters, factory unique id, machine-readable output | `--flash-info`, `--flash-info-json` | | not upstream ([mithro/openFPGALoader flash-info](https://github.com/mithro/openFPGALoader/tree/flash-info)) |
+| **RP1 PIO JTAG** on a Raspberry Pi 5: the RP1's PIO block shifts data instead of bit-banging PCIe-attached GPIOs (rp1-jtag's benchmarks: 6.5 s instead of 39 s for a 3.8 MB Artix-7 bitstream) | `rp1pio` cable ([`feature/rp1pio-cable`](https://github.com/mithro/openFPGALoader/tree/feature/rp1pio-cable)) | `rp1_pio_jtag` adapter, `interface/raspberrypi-rp1-pio.cfg` | not upstream; drivers are the copies [mithro/rp1-jtag](https://github.com/mithro/rp1-jtag) ships; they call librp1jtag (the `librp1jtag0` package here, linked in statically in the static binaries) |
+| **Kosagi NeTV2** on a Pi header, old-style (Pi 1-4 `bcm2835gpio`) and new-style (Pi 5 RP1 PIO), plus `linuxgpiod`, a picker and a jtagspi flash variant | `netv2`, `netv2_100` boards with GPIO cable auto-detection | `board/netv2-rpi*.cfg` | openFPGALoader: [`feature/netv2-board`](https://github.com/mithro/openFPGALoader/tree/feature/netv2-board), and boards in [PR #643](https://github.com/trabucayre/openFPGALoader/pull/643) open |
+| **Tiny Tapeout FPGA Demo Board** (iCE40UP5K behind an RP2040/RP2350 running MicroPython) | `tt_fpga` board, `tt_micropython` cable | | not upstream ([`feature/tt-fpga`](https://github.com/mithro/openFPGALoader/tree/feature/tt-fpga)) |
+| **iCE40 SRAM load over Raspberry Pi GPIO, untested on hardware** (SPI slave, TN-02001 Appendix A) for the Fomu EVT on a Pi header: the bitstream bit-banged on GPIO9 (SPI_SI, the Pi's MISO pin, which its SPI hardware cannot drive), CDONE checked before and after, the flash put in Deep Power-down and never written. On a Raspberry Pi 1-4 (`/proc/device-tree/compatible` names `brcm,bcm2835`, `2836`, `2837` or `2711`) the GPIO registers are written through `/dev/gpiomem`, with each pin's function saved and put back on every way out; the load stops loud, with no fall-back to libgpiod, if `/dev/gpiomem` is absent or closed to the user. Anywhere else (a Pi 5, `-d /dev/gpiochipN`) libgpiod drives the lines. **libgpiod cannot do it on a Pi 3 Model B+:** a trial on 17 Oct 2026 measured 0.440 MHz, under the iCE40's 1 MHz minimum slave configuration clock, so the load stopped and the board booted its flash again. The `/dev/gpiomem` path is not yet measured on hardware. A load that ends by error, SIGINT, SIGTERM, SIGHUP, SIGQUIT or SIGPIPE puts the pins back and leaves the board booting its flash, unless a pin does not read back: then CRESET_B stays low, the load says so and gives the recovery below. **Any other exit leaves the pins driven** (CRESET_B low, the iCE40 held in reset, SPI lines out), because `/dev/gpiomem` has no kernel cleanup: SIGKILL, SIGSEGV/SIGBUS, SIGABRT, `abort()`, `std::terminate()`, `exit()`/`_exit()` from elsewhere. To recover: (1) put every line the load drives back to an input, which lets CRESET_B go and the board's pull-up boot the iCE40 from its flash: for `fomu_evt_header` (SS 8, SI 9, SO 10, SCK 11, /HOLD 25, CRESET 27) `pinctrl set 8,9,10,11,25,27 ip` (`raspi-gpio set <n> ip` on older images; with `--pins`, the pins given plus CRESET_B, which goes in its own second command so the bus lines are inputs before the iCE40 leaves reset); (2) check CDONE is high again, `pinctrl get 17`, after which `fomu_header_id.py` can confirm the flash and foboot (it drives nothing while CDONE is low); (3) if CDONE stays low, power-cycle the board (on the fleet, the operator's PoE cycle). The next load refuses to start while a line is an output, and names it. The padding assumes posted register writes and is sized from cpufreq (the load stops before it drives anything if cpufreq cannot be read); the hardware trial measures the real edge spacing | `fomu_evt_header` board, `libgpiod` cable in SPI mode | | not upstream ([`feature/ice40-spi-sram`](https://github.com/mithro/openFPGALoader/tree/feature/ice40-spi-sram)) |
+| **SPI flash info and unique ID**: JEDEC id, SFDP parameters, factory unique id, machine-readable output | `--flash-info`, `--flash-info-json` | | not upstream ([`feature/flash-info`](https://github.com/mithro/openFPGALoader/tree/feature/flash-info)) |
 | **Device DNA / TraceID**: die-level identifiers | `--read-dna` (upstream) | `fpga/xilinx-dna.cfg` (upstream), `fpga/lattice-ecp5-traceid.cfg` (patch) | DNA is upstream in both; ECP5 TraceID is a patch |
-| Version strings that name this build | `--Version` prints `v<version>` | `openocd -v` prints the fpgas.online suffix | packaging glue |
+| Version strings that name this build | `--Version` prints `v<version>` ([`feature/cmake-version-override`](https://github.com/mithro/openFPGALoader/tree/feature/cmake-version-override)) | `openocd -v` prints the fpgas.online suffix | packaging glue |
 
 The spiOverJtag bridge bitstreams are upstream's, so the two openFPGALoader
 tracks ship different sets. Only the `master` track has `efinix_ti375n484`,
@@ -39,11 +42,19 @@ static build the `linuxgpiod` adapter is left out. `rp1_pio_jtag` (Pi 5) and
 `bcm2835gpio` (Pi 1-4) are unaffected; bookworm and the 32-bit static builds
 keep `linuxgpiod`; the `master` track has it everywhere.
 
-Series: [`patches/openfpgaloader/`](patches/openfpgaloader),
-[`patches/openocd/`](patches/openocd). Both tracks carry the same series;
-where the code differs between the upstream release and master (a class
-rename, a moved Tcl file, an older adapter table) the two copies differ in
-content but never in what they do.
+openFPGALoader: each feature is a branch of one to three patches on upstream
+master, kept rebased, with a backport on the latest release; the integration
+branches [`fpgas-online/master`](https://github.com/mithro/openFPGALoader/tree/fpgas-online/master) and
+[`fpgas-online/v1.1.1`](https://github.com/mithro/openFPGALoader/tree/fpgas-online/v1.1.1) merge them all, and their
+README lists every feature with its branches. The build checks out the
+pinned integration commit as it is (`fpgatools apply openfpgaloader <track>`
+fetches it from the fork just before building); there is no openFPGALoader
+patch series here.
+
+OpenOCD: series [`patches/openocd/`](patches/openocd). Both tracks carry the
+same series; where the code differs between the upstream release and master
+(a moved Tcl file, an older adapter table) the two copies differ in content
+but never in what they do.
 
 ## Versioning
 
@@ -194,8 +205,8 @@ sudo timeout -k 30 120 openFPGALoader -b fomu_evt_header design.bin
 ## Repository layout
 
 ```
-upstreams.toml            pinned inputs: openFPGALoader, OpenOCD, librp1jtag, piolib
-patches/<tool>/<track>/   git format-patch series
+upstreams.toml            pinned inputs: openFPGALoader (our fork), OpenOCD, librp1jtag, piolib
+patches/openocd/<track>/  git format-patch series (OpenOCD only)
 fpgatools/                stdlib-only CLI: fetch, apply, export, compare, version, debianize, bump
 packaging/debian/<name>/  debhelper templates rendered by `fpgatools debianize`
                           (the two tools, and the libraries rp1jtag and piolib)
@@ -215,14 +226,19 @@ docs/superpowers/         design spec and implementation plan
 
 ## Working on the patches
 
-Never edit a `.patch` by hand: each series is the export of a git branch.
+openFPGALoader changes are made in
+[mithro/openFPGALoader](https://github.com/mithro/openFPGALoader): on the
+feature branch (and its backport), then the integration branches are rebuilt;
+the daily bump picks the new heads up. Nothing here changes for them.
+
+OpenOCD: never edit a `.patch` by hand; each series is the export of a git branch.
 
 ```bash
-uv run fpgatools apply openfpgaloader master   # pinned upstream + series in build/src/openfpgaloader-master
+uv run fpgatools apply openocd master   # pinned upstream + series in build/src/openocd-master
 # ... edit, `git commit --amend`, `git rebase -i`, add commits in that tree ...
-uv run fpgatools export openfpgaloader master  # rewrite patches/openfpgaloader/master/
-uv run fpgatools apply openfpgaloader stable   # then the same for the other track
-uv run fpgatools compare openfpgaloader        # both tracks must carry the same series
+uv run fpgatools export openocd master  # rewrite patches/openocd/master/
+uv run fpgatools apply openocd stable   # then the same for the other track
+uv run fpgatools compare openocd        # both tracks must carry the same series
 ```
 
 ### Building locally
@@ -251,7 +267,11 @@ docker run --rm -v "$PWD:/work" -w /work -e REPO=/work alpine:3.21 \
 
 1. `fpgatools bump` moves the `master` pins to the upstream heads, the
    `stable` pins to the newest release tag and the librp1jtag and PIOLib
-   pins to their heads, and re-applies every series.
+   pins to their heads, and re-applies every series. openFPGALoader's pins
+   move to the heads of the fork's integration branches instead; if
+   upstream has released a newer tag than `fpgas-online/v<release>` is built
+   on, the run fails with a RESTACK line until the fork's backports are
+   rebuilt on it.
 2. The whole deb matrix and the whole static matrix build against those
    candidate pins, on a branch, publishing nothing.
 3. Only if every one of those builds passed and a pin actually moved does
