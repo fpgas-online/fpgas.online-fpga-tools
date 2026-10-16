@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Sat, 17 Oct 2026 03:46:22 +1030
-Subject: [PATCH 40/46] doc: the iCE40 GPIO load through /dev/gpiomem on a
+Subject: [PATCH 40/48] doc: the iCE40 GPIO load through /dev/gpiomem on a
  Raspberry Pi 1-4
 
 The Lattice page says which backend runs where and why (/proc/device-tree/

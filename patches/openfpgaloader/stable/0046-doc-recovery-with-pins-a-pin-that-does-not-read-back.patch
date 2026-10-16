@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Sat, 17 Oct 2026 04:53:20 +1030
-Subject: [PATCH 46/46] doc: recovery with --pins, a pin that does not read
+Subject: [PATCH 46/48] doc: recovery with --pins, a pin that does not read
  back, calibration first
 
 CRESET_B in its own second command so the bus lines are inputs before the
