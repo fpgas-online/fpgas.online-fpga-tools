@@ -26,7 +26,10 @@ def test_real_pins_have_what_the_versions_need():
     assert real.names == ("openfpgaloader", "openocd", "rp1jtag", "piolib")
     for tool in ("openfpgaloader", "openocd"):
         assert real.pin(tool, "master").describe is not None
-        assert real.pin(tool, "stable").ref.startswith("v")
+        stable = real.pin(tool, "stable")
+        # a forked tool's stable ref is its integration branch; describe is the release
+        assert (stable.describe if real.forked(tool) else stable.ref).startswith("v")
+    assert real.forked("openfpgaloader") and not real.forked("openocd")
     assert real.pin("rp1jtag").describe is not None
     assert real.pin("piolib").date is not None
 

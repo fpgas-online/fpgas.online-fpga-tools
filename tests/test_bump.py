@@ -49,7 +49,7 @@ def test_rewrite_pins_real_file():
     updates = [
         _update(pins, "openfpgaloader", "master", commit="a" * 40,
                 describe="v1.1.1-200-gaaaaaaa", date="2026-10-01"),
-        _update(pins, "openfpgaloader", "stable", ref="v1.2.0", commit="b" * 40),
+        _update(pins, "openfpgaloader", "stable", commit="b" * 40, describe="v1.2.0"),
         _update(pins, "openocd", "master"),  # unchanged
         _update(pins, "rp1jtag", None, commit="c" * 40),
     ]
@@ -58,7 +58,9 @@ def test_rewrite_pins_real_file():
     assert data["openfpgaloader"]["master"]["commit"] == "a" * 40
     assert data["openfpgaloader"]["master"]["describe"] == "v1.1.1-200-gaaaaaaa"
     assert data["openfpgaloader"]["master"]["date"] == "2026-10-01"
-    assert data["openfpgaloader"]["stable"] == {"ref": "v1.2.0", "commit": "b" * 40}
+    assert data["openfpgaloader"]["stable"] == {
+        "ref": pins.pin("openfpgaloader", "stable").ref, "commit": "b" * 40,
+        "describe": "v1.2.0"}
     assert data["openocd"]["master"] == tomllib.loads(text)["openocd"]["master"]
     assert data["rp1jtag"]["commit"] == "c" * 40
     assert data["rp1jtag"]["ref"] == "main"
