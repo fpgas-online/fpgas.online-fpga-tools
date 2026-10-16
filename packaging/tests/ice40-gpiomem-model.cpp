@@ -861,7 +861,7 @@ int main()
 		"read back 1", "0xAB, 0x05, 0xB9", false, false, true};
 	stuck_e.reset_held = true;
 	stuck_e.fsel_back = false;
-	stuck_e.stderr_has = "pinctrl get 17";
+	stuck_e.stderr_has = "pinctrl set 8,10,9,11,25 ip; then pinctrl set 27 ip; then pinctrl get 17";
 	run("GPFSEL of SPI_SO stays an output (restore readback)", NO_FAULT,
 		stuck, stuck_e);
 
