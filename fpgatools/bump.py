@@ -33,6 +33,9 @@ from fpgatools.version import parse_describe
 PINS_PATH = REPO / "upstreams.toml"
 META_ROOT = REPO / "build" / "meta"
 
+# How the openFPGALoader fork's integration branches are rebuilt.
+RESTACK_URL = "https://github.com/mithro/openFPGALoader/tree/fpgas-online/restack"
+
 # A release tag: v, digits and dots only. Excludes v2.0.0-rc1, nightly, ...
 RELEASE_TAG_RE = re.compile(r"^v\d+(\.\d+)+$")
 
@@ -105,9 +108,11 @@ class BumpReport:
             lines += [f"- {note}" for note in self.notes]
         lines += [
             "",
-            "A ❌ above means that series needs rebasing, and the pins stay where",
-            "they are until it does: `fpgatools apply <tool> <track>` reproduces",
-            "the conflict locally, and CLAUDE.md says how to re-export the series.",
+            "A ❌ above means that series needs rebasing (or, for a forked tool,",
+            "its fork's integration branches need a restack), and the pins stay",
+            "where they are until it does: `fpgatools apply <tool> <track>`",
+            "reproduces a series conflict locally, CLAUDE.md says how to re-export",
+            f"a series, and {RESTACK_URL} how to restack the openFPGALoader fork.",
         ]
         return "\n".join(lines) + "\n"
 
@@ -187,7 +192,11 @@ def fork_pins(name: str, pins: Pins, report: BumpReport,
 
     old = pins.pin(name, "master")
     head = run_git(["rev-parse", f"refs/fork/{old.ref}^{{commit}}"], cwd=meta).stdout.strip()
-    base = run_git(["merge-base", head, upstream_head], cwd=meta).stdout.strip()
+    found = run_git(["merge-base", head, upstream_head], cwd=meta, check=False)
+    if found.returncode != 0:
+        raise FpgatoolsError(f"{name}: the fork's {old.ref} ({head[:7]}) shares no history with "
+                             f"upstream's default branch ({upstream_head[:7]})")
+    base = found.stdout.strip()
     behind = int(run_git(["rev-list", "--count", f"{base}..{upstream_head}"],
                          cwd=meta).stdout.strip())
     if behind:

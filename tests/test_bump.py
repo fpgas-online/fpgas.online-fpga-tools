@@ -262,3 +262,66 @@ date = "2020-01-01"
         "openfpgaloader/stable: RESTACK: ours/v1.0.0 is built on v1.0.0, upstream released "
         "v1.1.0: restack the fork's backports on v1.1.0"]
     assert "❌ `openfpgaloader/stable`" in report.markdown()
+
+
+def _fork_fixture(tmp_path: Path, *, unrelated_master: bool = False, stable_tag: bool = True):
+    """An upstream with v1.0.0 and a fork with ours/master and ours/stable."""
+    up = tmp_path / "upstream"
+    up.mkdir()
+    git(up, "init", "-q", "-b", "master")
+    (up / "f").write_text("1\n")
+    git(up, "add", "f")
+    git(up, "commit", "-q", "-m", "one")
+    git(up, "tag", "-a", "v1.0.0", "-m", "v1.0.0")
+    fork = tmp_path / "fork"
+    git(tmp_path, "clone", "-q", str(up), str(fork))
+    if unrelated_master:
+        git(fork, "checkout", "-q", "--orphan", "ours/master")
+        git(fork, "rm", "-q", "-rf", ".")
+    else:
+        git(fork, "checkout", "-q", "-b", "ours/master", "master")
+    (fork / "g").write_text("feature\n")
+    git(fork, "add", "g")
+    git(fork, "commit", "-q", "-m", "feature")
+    if stable_tag:
+        git(fork, "checkout", "-q", "-b", "ours/stable", "v1.0.0")
+    else:
+        git(fork, "checkout", "-q", "--orphan", "ours/stable")
+        git(fork, "rm", "-q", "-rf", ".")
+    (fork / "g").write_text("backport\n")
+    git(fork, "add", "g")
+    git(fork, "commit", "-q", "-m", "backport")
+    pins_file = tmp_path / "upstreams.toml"
+    pins_file.write_text(f"""[openfpgaloader]
+url = "file://{fork}"
+upstream = "file://{up}"
+[openfpgaloader.stable]
+ref = "ours/stable"
+commit = "{'0' * 40}"
+describe = "v1.0.0"
+[openfpgaloader.master]
+ref = "ours/master"
+commit = "{'0' * 40}"
+describe = "v1.0.0"
+date = "2020-01-01"
+""")
+    return pins_file
+
+
+def test_bump_forked_missing_branch_fails(tmp_path: Path):
+    pins_file = _fork_fixture(tmp_path)
+    pins_file.write_text(pins_file.read_text().replace('ref = "ours/master"', 'ref = "ours/gone"'))
+    with pytest.raises(FpgatoolsError):
+        bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
+
+
+def test_bump_forked_master_without_upstream_history_fails(tmp_path: Path):
+    pins_file = _fork_fixture(tmp_path, unrelated_master=True)
+    with pytest.raises(FpgatoolsError, match="shares no history"):
+        bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
+
+
+def test_bump_forked_stable_not_on_a_release_fails(tmp_path: Path):
+    pins_file = _fork_fixture(tmp_path, stable_tag=False)
+    with pytest.raises(FpgatoolsError):
+        bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
