@@ -1,18 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// The /dev/gpiomem backend of the iCE40 SPI slave load (GpiomemIce40Spi,
-// openFPGALoader patch "gpiomem: the iCE40 SPI slave load through a
-// Raspberry Pi's GPIO registers") against a model of the Pi's GPIO
-// registers and of what is wired to them: an iCE40 and the SPI flash that
-// shares its bus. The real Ice40::program_cram_slave() drives the real
-// GpiomemIce40Spi; only the register page is the model. No hardware, and no
-// /dev/gpiomem, is touched.
+// The /dev/gpiomem backend of the iCE40 SPI slave load (GpiomemIce40Spi)
+// against a model of the Pi's GPIO registers and of what is wired to them:
+// an iCE40 and the SPI flash that shares its bus. The real
+// Ice40::program_cram_slave() drives the real GpiomemIce40Spi; only the
+// register page, the clock, the spin and cpufreq are the model's. No
+// hardware, and no /dev/gpiomem, is touched.
+//
+// The model keeps a virtual clock (ns): every register access and every
+// spin advances it, by a cost the case gives, scaled by the modelled CPU
+// clock. It time-stamps every SPI_SCK edge, so a case can assert the least
+// SCK high time, low time and period the load produced. It also models the
+// level a pin takes when its function becomes "output": the set/clear
+// written first, or the latch's power-up 0, so a wrong order shows as a
+// glitch on SPI_SS (counted).
+//
+// Mutants this test must kill (each was run by hand against the backend; the
+// results are in the commit that added them): padding not applied; padding
+// halved; padding not scaled to the maximum CPU clock; GPFSEL written before
+// GPSET/GPCLR; the GPFSEL readback check deleted; the restore not run.
 //
 // Linked to the objects of a built, patched openFPGALoader tree by
-// packaging/tests/ice40-slave-model.sh. Each case states what must happen:
-// the result, which bytes the iCE40 received, which flash commands the flash
-// received, and that every pin function is put back as it was found. Exits 1
-// on the first case that does not hold.
+// packaging/tests/ice40-slave-model.sh. Exits 1 on the first case that does
+// not hold.
 
 #include <fcntl.h>
 #include <signal.h>
@@ -20,13 +30,14 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <iterator>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -44,7 +55,22 @@ enum {REG_GPFSEL0 = 0x00, REG_GPFSEL5 = 0x14, REG_GPSET0 = 0x1C,
 
 enum Fault {
 	NO_FAULT, CONFIG_FAILS, SIGTERM_IN_IMAGE, SIGINT_AT_END, SIGHUP_IN_FLASH,
-	CDONE_LOW_BEFORE, HANDLER_RESTORE_IN_IMAGE
+	CDONE_LOW_BEFORE, HANDLER_RESTORE_IN_IMAGE, SIGQUIT_IN_IMAGE,
+	SIGPIPE_IN_IMAGE
+};
+
+/* what the modelled host is like */
+struct Host {
+	double real_ns = 60;  // real time one access takes (Ice40 times the load in real time)
+	double access_ns = 30;  // virtual time of one register access at ref_khz
+	double spin_ns = 1;  // virtual time of one spin at ref_khz
+	double ref_khz = 1000000;  // the clock the two costs above are for
+	CpuFreq freq = {1000000, 1000000, 1000000};
+	long ramp_at = -1;  // image rising edges after which the CPU is at max
+	bool freq_throws = false;  // cpufreq cannot be read
+	bool freq_flaps = false;  // the clock reads different every time
+	int stick_pin = -1;  // a pin whose GPFSEL bits do not take...
+	bool stick_stays_output = false;  // ...once it is an output (else: never becomes one)
 };
 
 static std::string joined(const std::vector<std::string> &v)
@@ -68,11 +94,11 @@ static void busy_wait_ns(double ns)
 /* the registers of a Pi's GPIO block, an iCE40 on the pins, and its flash */
 struct World {
 	Fault fault;
-	double cost_ns;  // what one register access takes
+	Host host;
 	uint32_t fsel[6] = {0, 0, 0, 0, 0, 0};
 	uint32_t latch = 0;  // what GPSET0 / GPCLR0 left for each pin
-	int accesses = 0, writes = 0;
-	bool saw_alt_write = false;
+	int writes = 0;
+	double vt = 0;  // the virtual clock, ns
 
 	// the iCE40
 	bool in_reset = false, slave = false, cdone = true;
@@ -82,13 +108,18 @@ struct World {
 	std::vector<std::string> flash_ops;
 	int fbits = 0, fop = 0;
 	uint32_t last_levels = 0;
-	std::vector<std::string> log;  // CRESET, SS and the end
+	std::vector<std::string> log;
+	// the wires
+	int ss_changes = 0;
+	std::vector<double> sck_rise, sck_fall;  // virtual times, slave mode
 
-	World(Fault f, double cost, uint64_t bits): fault(f), cost_ns(cost),
+	World(Fault f, const Host &h, uint64_t bits): fault(f), host(h),
 		want_bits(bits) {
 		cdone = (f != CDONE_LOW_BEFORE);
 		last_levels = levels();
 	}
+
+	double scale() const { return host.ref_khz / host.freq.cur_khz; }
 
 	uint32_t function(unsigned int pin) const {
 		return (fsel[pin / 10] >> (3 * (pin % 10))) & 7;
@@ -121,9 +152,13 @@ struct World {
 		return lv;
 	}
 
+	void tick() {
+		vt += host.access_ns * scale();
+		busy_wait_ns(host.real_ns);
+	}
+
 	uint32_t read(uint32_t offset) {
-		accesses++;
-		busy_wait_ns(cost_ns);
+		tick();
 		if (offset >= REG_GPFSEL0 && offset <= REG_GPFSEL5 && offset % 4 == 0)
 			return fsel[offset / 4];
 		if (offset == REG_GPLEV0)
@@ -133,18 +168,20 @@ struct World {
 	}
 
 	void write(uint32_t offset, uint32_t value) {
-		accesses++;
 		writes++;
-		/* a write of zero to GPSET0 / GPCLR0 changes nothing: with a free
-		 * host it costs nothing here, which is what the load's own timing
-		 * run (zero masks) then sees: a fast host, to be padded
-		 */
-		if (cost_ns == 0 && value == 0 &&
-				(offset == REG_GPSET0 || offset == REG_GPCLR0))
-			return;
-		busy_wait_ns(cost_ns);
+		tick();
 		if (offset >= REG_GPFSEL0 && offset <= REG_GPFSEL5 && offset % 4 == 0) {
+			uint32_t old = fsel[offset / 4];
 			fsel[offset / 4] = value;
+			int sp = host.stick_pin;
+			if (sp >= 0 && offset / 4 == (uint32_t)sp / 10) {
+				uint32_t was = (old >> (3 * (sp % 10))) & 7;
+				uint32_t want = (value >> (3 * (sp % 10))) & 7;
+				bool refuse = host.stick_stays_output ?
+					(was == 1 && want != 1) : (want == 1);
+				if (refuse)
+					set_function(sp, was);
+			}
 		} else if (offset == REG_GPSET0) {
 			latch |= value;
 		} else if (offset == REG_GPCLR0) {
@@ -157,6 +194,18 @@ struct World {
 			edges();
 	}
 
+	void spin(uint32_t n) { vt += n * host.spin_ns * scale(); }
+
+	CpuFreq cpu_freq() {
+		if (host.freq_throws)
+			throw std::runtime_error("cannot read cpufreq (modelled)");
+		if (host.freq_flaps) {
+			host.freq.cur_khz += 1;
+			host.freq.max_khz = std::max(host.freq.max_khz, host.freq.cur_khz);
+		}
+		return host.freq;
+	}
+
 	/* what the wires do after a register write */
 	void edges() {
 		uint32_t now = levels();
@@ -164,8 +213,10 @@ struct World {
 		last_levels = now;
 		auto rose = [&](unsigned int p) { return !(was >> p & 1) && (now >> p & 1); };
 		auto fell = [&](unsigned int p) { return (was >> p & 1) && !(now >> p & 1); };
-		bool ss_low = this->ss_low();
+		bool sel = ss_low();
 
+		if (rose(SS) || fell(SS))
+			ss_changes++;
 		if (fell(CRESET)) {
 			in_reset = true;
 			slave = false;
@@ -176,7 +227,7 @@ struct World {
 		if (rose(CRESET) && in_reset) {
 			in_reset = false;
 			log.push_back("CRESET high");
-			if (ss_low) {
+			if (sel) {
 				slave = true;  // "enters SPI peripheral mode when CRESET_B
 				cdone = false;  //  returns High while SPI_SS is Low"
 				image_bits = 0;
@@ -193,18 +244,29 @@ struct World {
 			fop = 0;
 			last_levels = levels();
 		}
+		if (slave && rose(SCK))
+			sck_rise.push_back(vt);
+		if (slave && fell(SCK))
+			sck_fall.push_back(vt);
 		if (rose(SCK)) {
-			if (slave && ss_low) {
+			if (slave && sel) {
 				if (image_bits < want_bits) {
 					if (now >> SI & 1)
 						received[image_bits >> 3] |= 0x80 >> (image_bits & 7);
 					image_bits++;
 					edges_in_image++;
-					if (fault == SIGTERM_IN_IMAGE && edges_in_image == 300000)
-						raise(SIGTERM);
-					if (fault == HANDLER_RESTORE_IN_IMAGE &&
-							edges_in_image == 300000)
-						raise(SIGUSR1);
+					if ((long)edges_in_image == host.ramp_at)
+						host.freq.cur_khz = host.freq.max_khz;
+					if (edges_in_image == 300000) {
+						if (fault == SIGTERM_IN_IMAGE)
+							raise(SIGTERM);
+						if (fault == SIGQUIT_IN_IMAGE)
+							raise(SIGQUIT);
+						if (fault == SIGPIPE_IN_IMAGE)
+							raise(SIGPIPE);
+						if (fault == HANDLER_RESTORE_IN_IMAGE)
+							raise(SIGUSR1);
+					}
 				} else {
 					post_clocks++;
 					if (post_clocks == 120 && fault == SIGINT_AT_END)
@@ -214,7 +276,7 @@ struct World {
 						last_levels = levels();
 					}
 				}
-			} else if (in_reset && ss_low) {
+			} else if (in_reset && sel) {
 				if (fbits < 8) {
 					fop = (fop << 1) | (now >> SO & 1);
 					fbits++;
@@ -231,7 +293,6 @@ struct World {
 	}
 };
 
-
 /* the registers the backend sees: the world's, by reference, so that the
  * world can be looked at after the backend is gone
  */
@@ -241,6 +302,9 @@ struct FakeRegs : Ice40GpioRegs {
 	void write(uint32_t offset, uint32_t value) override {
 		world->write(offset, value);
 	}
+	double now_ns() override { return world->vt; }
+	void spin(uint32_t n) override { world->spin(n); }
+	CpuFreq cpu_freq() override { return world->cpu_freq(); }
 	World *world;
 };
 
@@ -278,21 +342,43 @@ static void on_usr1(int)
 	handler_bad = handler_target->restore_functions();
 }
 
-/* GPIO25 (/HOLD) is an output at the start, as something earlier left it:
- * what is put back is the function that was saved, not "input"
- */
-static void start_functions(World &w)
-{
-	w.set_function(HOLDN, 1);
-	w.last_levels = w.levels();
-}
+/* stderr into a file for the length of a scope: the destructor's words */
+struct CaptureStderr {
+	CaptureStderr(): saved(dup(2)) {
+		fflush(stderr);
+		std::cerr.flush();
+		int fd = open("ice40-gpiomem-model.stderr",
+			O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		dup2(fd, 2);
+		close(fd);
+	}
+	std::string finish() {
+		fflush(stderr);
+		std::cerr.flush();
+		dup2(saved, 2);
+		close(saved);
+		std::ifstream f("ice40-gpiomem-model.stderr");
+		return std::string((std::istreambuf_iterator<char>(f)),
+			std::istreambuf_iterator<char>());
+	}
+	int saved;
+};
 
 struct Expect {
+	Expect(const std::string &e, const std::string &f, bool img, bool cd,
+		bool touched): error(e), flash(f), image(img), cdone_after(cd),
+		pins_touched(touched) {}
 	std::string error;  // empty: loads; else words the error contains
 	std::string flash;  // the flash commands the flash must have received
 	bool image;  // the iCE40 received the whole image, in order
 	bool cdone_after;
 	bool pins_touched;  // false: no register was written at all
+	bool reset_held = false;  // CRESET_B still held low (a line is stuck)
+	bool timing = false;  // assert the SCK phases and period
+	bool pad = false;  // the load must have applied padding
+	int ss_changes = -1;  // the level changes SPI_SS must have had
+	bool fsel_back = true;  // every GPFSEL as it was found
+	std::string stderr_has;  // words the destructor must have said
 };
 
 static std::vector<uint8_t> make_image()
@@ -303,49 +389,52 @@ static std::vector<uint8_t> make_image()
 	return img;
 }
 
-static void run(const std::string &name, Fault f, double cost_ns,
+static void run(const std::string &name, Fault f, const Host &host,
 		const Expect &want)
 {
 	std::vector<uint8_t> img = make_image();
-	World w(f, cost_ns, img.size() * 8ULL);
-	start_functions(w);
+	World w(f, host, img.size() * 8ULL);
 	uint32_t before[6];
 	memcpy(before, w.fsel, sizeof(before));
-	std::string got;
-	double hz = 0;
+	std::string got, err_out;
+	uint32_t pad = 0;
 	{
-		GpiomemIce40Spi spi(fomu_pins(),
-			std::unique_ptr<Ice40GpioRegs>(new FakeRegs(&w)), -1);
-		if (f == HANDLER_RESTORE_IN_IMAGE) {
-			handler_target = &spi;
-			handler_bad = -1;
-			struct sigaction sa;
-			memset(&sa, 0, sizeof(sa));
-			sa.sa_handler = on_usr1;
-			sigemptyset(&sa.sa_mask);
-			sigaction(SIGUSR1, &sa, NULL);
-		}
-		Ice40 ice(&spi, "model.bin", "bin", -1);
-		auto t0 = std::chrono::steady_clock::now();
-		try {
-			ice.program_cram_slave(img.data(), img.size());
-		} catch (std::exception &e) {
-			got = e.what();
-		}
-		hz = img.size() * 8.0 / std::chrono::duration<double>(
-			std::chrono::steady_clock::now() - t0).count();
-		if (f == HANDLER_RESTORE_IN_IMAGE) {
-			struct sigaction sa;
-			memset(&sa, 0, sizeof(sa));
-			sa.sa_handler = SIG_DFL;
-			sigaction(SIGUSR1, &sa, NULL);
-			handler_target = NULL;
-		}
-	}  // the backend is gone: its destructor put the pins back
+		CaptureStderr cap;
+		{
+			GpiomemIce40Spi spi(fomu_pins(),
+				std::unique_ptr<Ice40GpioRegs>(new FakeRegs(&w)), -1);
+			if (f == HANDLER_RESTORE_IN_IMAGE) {
+				handler_target = &spi;
+				handler_bad = -1;
+				struct sigaction sa;
+				memset(&sa, 0, sizeof(sa));
+				sa.sa_handler = on_usr1;
+				sigemptyset(&sa.sa_mask);
+				sigaction(SIGUSR1, &sa, NULL);
+			}
+			Ice40 ice(&spi, "model.bin", "bin", -1);
+			try {
+				ice.program_cram_slave(img.data(), img.size());
+			} catch (std::exception &e) {
+				got = e.what();
+			}
+			pad = spi.pad_spins();
+			if (f == HANDLER_RESTORE_IN_IMAGE) {
+				struct sigaction sa;
+				memset(&sa, 0, sizeof(sa));
+				sa.sa_handler = SIG_DFL;
+				sigaction(SIGUSR1, &sa, NULL);
+				handler_target = NULL;
+			}
+		}  // the backend is gone: its destructor put the pins back
+		err_out = cap.finish();
+	}
 	std::cout << "=== " << name << ": " << (got.empty() ? "loaded" : got)
 		<< std::endl << "  flash: " << joined(w.flash_ops) << "; iCE40: "
-		<< joined(w.log) << "; " << w.writes << " register writes" << std::endl;
-	(void)hz;
+		<< joined(w.log) << "; " << w.writes << " register writes, pad "
+		<< pad << " spins" << std::endl;
+	if (!err_out.empty())
+		std::cout << "  stderr: " << err_out;
 	if (want.error.empty())
 		expect(got.empty(), "loads");
 	else
@@ -359,26 +448,67 @@ static void run(const std::string &name, Fault f, double cost_ns,
 		expect(w.image_bits == w.want_bits && rx == img,
 			"the iCE40 received the whole image, msb first, in order");
 	}
-	for (int i = 0; i < 6; i++)
-		expect(w.fsel[i] == before[i],
-			"GPFSEL" + std::to_string(i) + " is as it was found");
+	if (want.fsel_back)
+		for (int i = 0; i < 6; i++)
+			expect(w.fsel[i] == before[i],
+				"GPFSEL" + std::to_string(i) + " is as it was found");
 	expect(w.cdone == want.cdone_after, std::string("CDONE ") +
 		(want.cdone_after ? "high" : "low") + " at the end");
-	expect(!w.in_reset, "CRESET_B let go at the end");
+	expect(w.in_reset == want.reset_held, want.reset_held ?
+		"CRESET_B still held low at the end (a line is stuck)" :
+		"CRESET_B let go at the end");
 	if (!want.pins_touched)
 		expect(w.writes == 0, "no register was written");
+	if (!want.stderr_has.empty())
+		expect(err_out.find(want.stderr_has) != std::string::npos,
+			"the destructor says \"" + want.stderr_has + "\"");
+	if (want.pad)
+		expect(pad > 0, "padding was applied");
+	if (want.ss_changes >= 0)
+		expect(w.ss_changes == want.ss_changes, "SPI_SS changed level " +
+			std::to_string(want.ss_changes) + " times (got " +
+			std::to_string(w.ss_changes) + "): no glitch when it becomes "
+			"an output");
+	if (want.timing) {
+		double hi = 1e18, lo = 1e18, per = 1e18;
+		size_t n = std::min(w.sck_rise.size(), w.sck_fall.size());
+		expect(w.sck_rise.size() >= w.want_bits, "SPI_SCK edges were timed");
+		for (size_t i = 0; i < n; i++) {
+			hi = std::min(hi, w.sck_fall[i] - w.sck_rise[i]);
+			if (i + 1 < w.sck_rise.size()) {
+				lo = std::min(lo, w.sck_rise[i + 1] - w.sck_fall[i]);
+				per = std::min(per, w.sck_rise[i + 1] - w.sck_rise[i]);
+			}
+		}
+		std::cout << "  SPI_SCK (virtual clock): least high " << hi
+			<< " ns, least low " << lo << " ns, least period " << per
+			<< " ns" << std::endl;
+		expect(hi >= 25 - 1e-6, "least SCK high time is 25 ns or more");
+		expect(lo >= 25 - 1e-6, "least SCK low time is 25 ns or more");
+		expect(per >= 50 - 1e-6, "least SCK period is 50 ns or more");
+	}
 	if (f == HANDLER_RESTORE_IN_IMAGE)
 		expect(handler_bad == 0, "restore_functions() from a signal handler "
 			"put every changed pin back (and read back)");
 	handler_untouched("SIGINT", SIGINT);
 	handler_untouched("SIGTERM", SIGTERM);
 	handler_untouched("SIGHUP", SIGHUP);
+	handler_untouched("SIGQUIT", SIGQUIT);
+	handler_untouched("SIGPIPE", SIGPIPE);
 }
 
-static void case_alt_function()
+/* the start state: which pins are in which function, and what the
+ * constructor says; nothing may be written
+ */
+static void case_start(const std::string &name,
+		const std::vector<std::pair<int, int>> &functions,
+		const std::vector<std::string> &words)
 {
-	World w(NO_FAULT, 0, 8);
-	w.set_function(SI, 4);  // GPIO9 ALT0: SPI0 MISO
+	Host h;
+	World w(NO_FAULT, h, 8);
+	for (auto &p : functions)
+		w.set_function(p.first, p.second);
+	w.last_levels = w.levels();
 	std::string got;
 	try {
 		GpiomemIce40Spi spi(fomu_pins(),
@@ -386,15 +516,16 @@ static void case_alt_function()
 	} catch (std::exception &e) {
 		got = e.what();
 	}
-	std::cout << "=== a pin in an alternate function: " << got << std::endl;
-	expect(got.find("GPIO9 is in alternate function 4") != std::string::npos,
-		"refuses GPIO9 in ALT0");
-	expect(w.writes == 0, "no register written");
+	std::cout << "=== " << name << ": " << got << std::endl;
+	for (const std::string &s : words)
+		expect(got.find(s) != std::string::npos, name + ": says \"" + s + "\"");
+	expect(w.writes == 0, name + ": no register written");
 }
 
 static void case_pin_range()
 {
-	World w(NO_FAULT, 0, 8);
+	Host h;
+	World w(NO_FAULT, h, 8);
 	ice40_gpio_pins_t p = fomu_pins();
 	p.sck = 40;  // GPSET1 territory: not supported
 	std::string got;
@@ -421,22 +552,17 @@ static void case_pin_range()
 	expect(w.writes == 0, "no register written");
 }
 
-/* what the padding does for hosts of every speed */
+/* the pad for hosts of every speed (bit_ns and spin_ns as at max clock) */
 static void case_padding()
 {
 	std::cout << "=== padding for a bit of 3 writes of w ns" << std::endl;
-	// w = 5 ns (bit 15): high needs 20 more (25 - 5), period 3*5+2*20 = 55
 	expect(GpiomemIce40Spi::pad_spins_for(15, 1) == 20, "w 5 ns, spin 1 ns: 20");
-	// w = 10 ns: 15 ns each phase pad; period 30 + 30 = 60
 	expect(GpiomemIce40Spi::pad_spins_for(30, 1) == 15, "w 10 ns, spin 1 ns: 15");
-	// w = 12.5 ns: pad 12.5, period 37.5 + 25 = 62.5
 	expect(GpiomemIce40Spi::pad_spins_for(37.5, 2.5) == 5,
 		"w 12.5 ns, spin 2.5 ns: 5");
-	// w = 25 ns: high 25 is met; low 50; period 75 > 50: no pad
 	expect(GpiomemIce40Spi::pad_spins_for(75, 1) == 0, "w 25 ns: 0");
-	// a slow host (w = 300 ns): no pad
 	expect(GpiomemIce40Spi::pad_spins_for(900, 1) == 0, "w 300 ns: 0");
-	// the padded bit never falls under 50 ns, whatever the spin cost
+	// the padded bit holds the 25 ns phases and the 50 ns period
 	for (double w = 1; w < 30; w += 0.7)
 		for (double sp : {0.4, 1.0, 3.3}) {
 			uint32_t pad = GpiomemIce40Spi::pad_spins_for(3 * w, sp);
@@ -492,10 +618,22 @@ static void case_selection()
 	GpiomemIce40Spi::Choice ch = GpiomemIce40Spi::select(true, f);
 	expect(!ch.gpiomem && ch.why.find("-d") != std::string::npos,
 		"-d names a gpiochip: libgpiod, and says so");
-	ch = GpiomemIce40Spi::select(false, "ice40-gpiomem-model.no-such-file");
-	expect(!ch.gpiomem && ch.why.find("cannot read") != std::string::npos,
-		"no device tree: libgpiod, and says why");
 	remove(f.c_str());
+	// absent: not a device-tree host: libgpiod
+	ch = GpiomemIce40Spi::select(false, "ice40-gpiomem-model.no-such-file");
+	expect(!ch.gpiomem && ch.why.find("does not exist") != std::string::npos,
+		"no device tree: libgpiod, and says why");
+	// present but unreadable (a directory): an error, not a guess
+	std::string got;
+	try {
+		GpiomemIce40Spi::select(false, ".");
+	} catch (std::exception &e) {
+		got = e.what();
+	}
+	std::cout << "  present but unreadable: " << got << std::endl;
+	expect(got.find("cannot read .") != std::string::npos &&
+		got.find("the load stops") != std::string::npos,
+		"compatible present but unreadable: stops loud");
 }
 
 static void case_open_gpiomem()
@@ -553,38 +691,165 @@ static void case_regs_mapping()
 	remove(path.c_str());
 }
 
+/* cpufreq as read from sysfs-shaped files */
+static void case_cpufreq_files()
+{
+	std::cout << "=== cpufreq files" << std::endl;
+	const std::string d = "ice40-gpiomem-model.cpufreq";
+	mkdir(d.c_str(), 0755);
+	write_file(d + "/scaling_cur_freq", "600000\n");
+	write_file(d + "/cpuinfo_min_freq", "600000\n");
+	write_file(d + "/cpuinfo_max_freq", "1400000\n");
+	CpuFreq f = Ice40GpioRegs::read_cpufreq(d);
+	expect(f.cur_khz == 600000 && f.min_khz == 600000 && f.max_khz == 1400000,
+		"cur, min and max are read in kHz");
+	std::string got;
+	remove((d + "/cpuinfo_max_freq").c_str());
+	try {
+		Ice40GpioRegs::read_cpufreq(d);
+	} catch (std::exception &e) {
+		got = e.what();
+	}
+	std::cout << "  missing max: " << got << std::endl;
+	expect(got.find("cannot read " + d + "/cpuinfo_max_freq") !=
+		std::string::npos && got.find("nothing is driven") != std::string::npos,
+		"a missing cpufreq file stops loud, naming the file");
+	write_file(d + "/cpuinfo_max_freq", "not a number\n");
+	got.clear();
+	try {
+		Ice40GpioRegs::read_cpufreq(d);
+	} catch (std::exception &e) {
+		got = e.what();
+	}
+	expect(got.find("does not hold a positive frequency") != std::string::npos,
+		"a file that is not a number stops loud");
+	write_file(d + "/cpuinfo_max_freq", "500000\n");  // below min
+	got.clear();
+	try {
+		Ice40GpioRegs::read_cpufreq(d);
+	} catch (std::exception &e) {
+		got = e.what();
+	}
+	expect(got.find("not in order") != std::string::npos,
+		"cur/min/max out of order stops loud");
+	remove((d + "/scaling_cur_freq").c_str());
+	remove((d + "/cpuinfo_min_freq").c_str());
+	remove((d + "/cpuinfo_max_freq").c_str());
+	rmdir(d.c_str());
+}
+
 int main()
 {
 	const Expect loaded = {"", "0xAB, 0x05, 0xB9", true, true, true};
 	const std::string recover = "SPI lines released; the iCE40 was reset and "
 		"booted from its flash again (CDONE high)";
+	Host steady;  // 1 GHz, nothing moves
 
-	run("normal, host 3 register writes of 60 ns", NO_FAULT, 60, loaded);
-	run("normal, host as fast as the model goes (padded)", NO_FAULT, 0, loaded);
-	run("host too slow, 2 us a register access", NO_FAULT, 2000,
-		{"below the iCE40's 1 MHz minimum", "0xAB, 0x05, 0xB9", false, true, true});
-	run("configuration refused", CONFIG_FAILS, 60,
+	Expect normal = loaded;
+	normal.timing = true;
+	normal.ss_changes = 10;
+	run("normal, writes of 30 ns", NO_FAULT, steady, normal);
+
+	// a fast CPU: writes of 5 ns need padding to reach 25 ns phases
+	Host fast = steady;
+	fast.access_ns = 5;
+	Expect padded = normal;
+	padded.pad = true;
+	run("fast CPU, writes of 5 ns (padded)", NO_FAULT, fast, padded);
+
+	// the CPU starts at 600 MHz and ramps to 1400 MHz inside the image:
+	// the pad, sized at 600 MHz, must hold at 1400 MHz
+	Host ramp = steady;
+	ramp.ref_khz = 600000;
+	ramp.freq = {600000, 600000, 1400000};
+	ramp.access_ns = 12;
+	ramp.ramp_at = 1000;
+	run("CPU at 600 MHz ramps to its 1400 MHz maximum in the image", NO_FAULT,
+		ramp, padded);
+
+	// the real time of the load under 1 MHz: Ice40's check stops it
+	Host slow_real = steady;
+	slow_real.real_ns = 2000;
+	Expect slow = {"below the iCE40's 1 MHz minimum", "0xAB, 0x05, 0xB9",
+		false, true, true};
+	run("host too slow in real time, 2 us a register access", NO_FAULT,
+		slow_real, slow);
+
+	// a CPU too slow at its minimum clock for 1 MHz: stopped before the image
+	Host slow_min = steady;
+	slow_min.access_ns = 400;
+	run("a bit takes over 1 us at the minimum clock", NO_FAULT, slow_min,
+		{"would fall under the iCE40's 1 MHz minimum", "0xAB, 0x05, 0xB9",
+		false, true, true});
+
+	Host nofreq = steady;
+	nofreq.freq_throws = true;
+	run("cpufreq cannot be read", NO_FAULT, nofreq,
+		{"cannot read cpufreq (modelled)", "0xAB, 0x05, 0xB9", false, true,
+		true});
+	Host flap = steady;
+	flap.freq_flaps = true;
+	run("the CPU clock never holds still", NO_FAULT, flap,
+		{"the CPU clock kept changing", "0xAB, 0x05, 0xB9", false, true,
+		true});
+
+	run("configuration refused", CONFIG_FAILS, steady,
 		{"CDONE stayed low after the image", "0xAB, 0x05, 0xB9", true, true, true});
-	run("SIGTERM in the image", SIGTERM_IN_IMAGE, 0,
-		{"interrupted by SIGTERM; " + recover, "0xAB, 0x05, 0xB9", false, true, true});
-	run("SIGINT in the 49 clocks", SIGINT_AT_END, 0,
+	for (auto sig : {SIGTERM_IN_IMAGE, SIGQUIT_IN_IMAGE, SIGPIPE_IN_IMAGE}) {
+		const char *n = sig == SIGTERM_IN_IMAGE ? "SIGTERM" :
+			sig == SIGQUIT_IN_IMAGE ? "SIGQUIT" : "SIGPIPE";
+		run(std::string(n) + " in the image", sig, steady,
+			{std::string("interrupted by ") + n + "; " + recover,
+			"0xAB, 0x05, 0xB9", false, true, true});
+	}
+	run("SIGINT in the 49 clocks", SIGINT_AT_END, steady,
 		{"interrupted by SIGINT", "0xAB, 0x05, 0xB9", true, true, true});
-	run("SIGHUP during the flash power-down", SIGHUP_IN_FLASH, 0,
+	run("SIGHUP during the flash power-down", SIGHUP_IN_FLASH, steady,
 		{"interrupted by SIGHUP", "0xAB", false, true, true});
-	run("CDONE low before", CDONE_LOW_BEFORE, 0,
+	run("CDONE low before", CDONE_LOW_BEFORE, steady,
 		{"CDONE is low before the reset", "", false, false, false});
 	/* the pins go to inputs under the load's feet: the image never arrives
 	 * and CDONE stays low, the load stops and recovers as for any failure
 	 */
 	run("restore_functions() from a signal handler", HANDLER_RESTORE_IN_IMAGE,
-		0, {"CDONE stayed low after the image", "0xAB, 0x05, 0xB9", false, true,
-		true});
-	case_alt_function();
+		steady, {"CDONE stayed low after the image", "0xAB, 0x05, 0xB9", false,
+		true, true});
+
+	// a GPFSEL write that does not take, SPI_SCK never becomes an output:
+	// the readback in fsel() must see it
+	Host nosck = steady;
+	nosck.stick_pin = SCK;
+	Expect nosck_e = {"unable to change the function of GPIO11: wrote 1, "
+		"read back 0", "", false, true, true};
+	run("GPFSEL of SPI_SCK does not take (fsel readback)", NO_FAULT, nosck,
+		nosck_e);
+	// SPI_SO becomes an output and stays one: the load stops, and the
+	// restore's readback disagrees (bad > 0) and says so
+	Host stuck = steady;
+	stuck.stick_pin = SO;
+	stuck.stick_stays_output = true;
+	Expect stuck_e = {"unable to change the function of GPIO10: wrote 0, "
+		"read back 1", "0xAB, 0x05, 0xB9", false, false, true};
+	stuck_e.reset_held = true;
+	stuck_e.fsel_back = false;
+	stuck_e.stderr_has = "pin(s) did not read back";
+	run("GPFSEL of SPI_SO stays an output (restore readback)", NO_FAULT,
+		stuck, stuck_e);
+
+	// the start state
+	case_start("a pin in an alternate function", {{SI, 4}},
+		{"GPIO9 (SPI_SI) is in alternate function 4", "not taken over"});
+	case_start("CDONE already an output", {{CDONE, 1}},
+		{"GPIO17 (CDONE)", "already an output", "pinctrl set 17 ip"});
+	case_start("other driven pins already outputs", {{HOLDN, 1}, {SS, 1}},
+		{"GPIO8 (SPI_SS)", "GPIO25 (/HOLD)", "pinctrl set 8 ip",
+		"pinctrl set 25 ip", "already an output"});
 	case_pin_range();
 	case_padding();
 	case_selection();
 	case_open_gpiomem();
 	case_regs_mapping();
+	case_cpufreq_files();
 
 	std::cout << (failures ? "FAILED: " : "all cases hold: ") << failures
 		<< " failure(s)" << std::endl;

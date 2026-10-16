@@ -179,6 +179,8 @@ static void run(const std::string &name, Fault f, double hz,
 	handler_untouched("SIGINT", SIGINT);
 	handler_untouched("SIGTERM", SIGTERM);
 	handler_untouched("SIGHUP", SIGHUP);
+	handler_untouched("SIGQUIT", SIGQUIT);
+	handler_untouched("SIGPIPE", SIGPIPE);
 }
 
 int main()
