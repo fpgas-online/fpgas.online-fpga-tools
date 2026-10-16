@@ -21,6 +21,7 @@ The exact pins are in [`upstreams.toml`](upstreams.toml).
 | **RP1 PIO JTAG** on a Raspberry Pi 5: the RP1's PIO block shifts data instead of bit-banging PCIe-attached GPIOs (rp1-jtag's benchmarks: 6.5 s instead of 39 s for a 3.8 MB Artix-7 bitstream) | `rp1pio` cable | `rp1_pio_jtag` adapter, `interface/raspberrypi-rp1-pio.cfg` | not upstream; drivers are the copies [mithro/rp1-jtag](https://github.com/mithro/rp1-jtag) ships; they call librp1jtag (the `librp1jtag0` package here, linked in statically in the static binaries) |
 | **Kosagi NeTV2** on a Pi header, old-style (Pi 1-4 `bcm2835gpio`) and new-style (Pi 5 RP1 PIO), plus `linuxgpiod`, a picker and a jtagspi flash variant | `netv2`, `netv2_100` boards with GPIO cable auto-detection | `board/netv2-rpi*.cfg` | openFPGALoader boards: [PR #643](https://github.com/trabucayre/openFPGALoader/pull/643) open |
 | **Tiny Tapeout FPGA Demo Board** (iCE40UP5K behind an RP2040/RP2350 running MicroPython) | `tt_fpga` board, `tt_micropython` cable | | not upstream ([mithro/openFPGALoader tt-fpga-support](https://github.com/mithro/openFPGALoader/tree/tt-fpga-support)) |
+| **iCE40 SRAM load over Raspberry Pi GPIO, untested on hardware** (SPI slave, TN-02001 Appendix A) for the Fomu EVT on a Pi header: the bitstream bit-banged on GPIO9 (SPI_SI, the Pi's MISO pin, which its SPI hardware cannot drive), CDONE checked before and after, the flash put in Deep Power-down and never written. On a Raspberry Pi 1-4 (`/proc/device-tree/compatible` names `brcm,bcm2835`, `2836`, `2837` or `2711`) the GPIO registers are written through `/dev/gpiomem`, with each pin's function saved and put back on every way out; the load stops loud, with no fall-back to libgpiod, if `/dev/gpiomem` is absent or closed to the user. Anywhere else (a Pi 5, `-d /dev/gpiochipN`) libgpiod drives the lines. **libgpiod cannot do it on a Pi 3 Model B+:** a trial on 17 Oct 2026 measured 0.440 MHz, under the iCE40's 1 MHz minimum slave configuration clock, so the load stopped and the board booted its flash again. The `/dev/gpiomem` path is not yet measured on hardware. A load that ends by error, SIGINT, SIGTERM, SIGHUP, SIGQUIT or SIGPIPE puts the pins back and leaves the board booting its flash, unless a pin does not read back: then CRESET_B stays low, the load says so and gives the recovery below. **Any other exit leaves the pins driven** (CRESET_B low, the iCE40 held in reset, SPI lines out), because `/dev/gpiomem` has no kernel cleanup: SIGKILL, SIGSEGV/SIGBUS, SIGABRT, `abort()`, `std::terminate()`, `exit()`/`_exit()` from elsewhere. To recover: (1) put every line the load drives back to an input, which lets CRESET_B go and the board's pull-up boot the iCE40 from its flash: for `fomu_evt_header` (SS 8, SI 9, SO 10, SCK 11, /HOLD 25, CRESET 27) `pinctrl set 8,9,10,11,25,27 ip` (`raspi-gpio set <n> ip` on older images; with `--pins`, the pins given plus CRESET_B, which goes in its own second command so the bus lines are inputs before the iCE40 leaves reset); (2) check CDONE is high again, `pinctrl get 17`, after which `fomu_header_id.py` can confirm the flash and foboot (it drives nothing while CDONE is low); (3) if CDONE stays low, power-cycle the board (on the fleet, the operator's PoE cycle). The next load refuses to start while a line is an output, and names it. The padding assumes posted register writes and is sized from cpufreq (the load stops before it drives anything if cpufreq cannot be read); the hardware trial measures the real edge spacing | `fomu_evt_header` board, `libgpiod` cable in SPI mode | | not upstream ([mithro/openFPGALoader fpgas-online/ice40-gpio-spi-sram](https://github.com/mithro/openFPGALoader/tree/fpgas-online/ice40-gpio-spi-sram); #19) |
 | **SPI flash info and unique ID**: JEDEC id, SFDP parameters, factory unique id, machine-readable output | `--flash-info`, `--flash-info-json` | | not upstream ([mithro/openFPGALoader flash-info](https://github.com/mithro/openFPGALoader/tree/flash-info)) |
 | **Device DNA / TraceID**: die-level identifiers | `--read-dna` (upstream) | `fpga/xilinx-dna.cfg` (upstream), `fpga/lattice-ecp5-traceid.cfg` (patch) | DNA is upstream in both; ECP5 TraceID is a patch |
 | Version strings that name this build | `--Version` prints `v<version>` | `openocd -v` prints the fpgas.online suffix | packaging glue |
@@ -38,11 +39,11 @@ static build the `linuxgpiod` adapter is left out. `rp1_pio_jtag` (Pi 5) and
 `bcm2835gpio` (Pi 1-4) are unaffected; bookworm and the 32-bit static builds
 keep `linuxgpiod`; the `master` track has it everywhere.
 
-Series: [`patches/openfpgaloader/`](patches/openfpgaloader) (32 patches per
-track), [`patches/openocd/`](patches/openocd) (4 per track). Both tracks
-carry the same series; where the code differs between the upstream release
-and master (a class rename, a moved Tcl file, an older adapter table) the two
-copies differ in content but never in what they do.
+Series: [`patches/openfpgaloader/`](patches/openfpgaloader),
+[`patches/openocd/`](patches/openocd). Both tracks carry the same series;
+where the code differs between the upstream release and master (a class
+rename, a moved Tcl file, an older adapter table) the two copies differ in
+content but never in what they do.
 
 ## Versioning
 
@@ -180,6 +181,14 @@ sudo openFPGALoader -b netv2_100 --detect -f --flash-info --flash-info-json flas
 
 # Tiny Tapeout FPGA Demo Board over USB
 openFPGALoader -b tt_fpga design.bin
+
+# Fomu EVT on a Raspberry Pi header: iCE40 SRAM load over GPIO (the GPIO
+# registers through /dev/gpiomem on a Pi 1-4, libgpiod elsewhere; the log
+# names the backend). Needs /dev/gpiomem open to the user (the gpio group).
+# Not yet measured on hardware; stops if the clock leaves 1 to 25 MHz.
+# A time limit must end it with SIGTERM, never SIGKILL (which leaves the
+# iCE40 unconfigured and, on /dev/gpiomem, its pins driven):
+sudo timeout -k 30 120 openFPGALoader -b fomu_evt_header design.bin
 ```
 
 ## Repository layout
@@ -234,7 +243,7 @@ docker run --rm -v "$PWD:/work" -w /work -e REPO=/work alpine:3.21 \
 ```
 
 `uv run pytest -q` and `uv run ruff check` cover the tooling;
-`shellcheck packaging/*.sh packaging/static/*.sh` the scripts.
+`shellcheck packaging/*.sh packaging/static/*.sh packaging/tests/*.sh` the scripts.
 
 ### Following upstream
 
