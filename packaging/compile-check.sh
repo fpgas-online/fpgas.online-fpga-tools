@@ -51,6 +51,7 @@ openfpgaloader)
 	need "$src/build/boards.txt" "netv2" "netv2 board"
 	need "$src/build/boards.txt" "netv2_100" "netv2_100 board"
 	need "$src/build/boards.txt" "tt_fpga" "tt_fpga board"
+	need "$src/build/boards.txt" "fomu_evt_header" "fomu_evt_header board"
 	"$bin" --help | grep -q -- "--flash-info" || fail "--flash-info option missing"
 	;;
 openocd)
