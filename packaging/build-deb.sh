@@ -10,7 +10,8 @@
 # package builds against and depends on, from LIBS_DIR when build-libs.sh
 # already made them for this suite and architecture (deb.yml) or by running
 # build-libs.sh first (a one-off build); fetch the pinned upstream and
-# apply the patch series (fpgatools); render debian/ (fpgatools debianize,
+# apply the patch series, or check out openFPGALoader's fork
+# (fpgatools apply); render debian/ (fpgatools debianize,
 # with DEB_VERSION: the shared deb-version.py's, which CI passes);
 # dpkg-buildpackage; then install-test.sh, so a broken package fails here
 # and not on a Pi. CI sets INSTALL_TEST=no and runs install-test.sh in a
@@ -56,7 +57,7 @@ fi
 
 fpgatools apply "$tool" "$track"
 src=$REPO/build/src/$tool-$track
-echo "==> patched tree at $src"
+echo "==> source tree at $src"
 
 [ "$tool" = openocd ] && packaging/fetch-jimtcl.sh "$src"
 

@@ -48,6 +48,15 @@ def _pins(pins: Pins | None) -> Pins:
     return pins if pins is not None else load(PINS_PATH)
 
 
+def _no_series(tool: str, pins: Pins, what: str) -> None:
+    """A forked tool's changes live in its fork, never in a series here."""
+    if pins.forked(tool):
+        raise FpgatoolsError(
+            f"{tool} has no patch series to {what}: its changes are on the integration "
+            f"branches of {pins.url(tool)} (upstreams.toml), which the pins follow"
+        )
+
+
 # --- paths ------------------------------------------------------------------------
 
 
@@ -136,9 +145,19 @@ def _failed_patch(dest: Path, patches: list[Path]) -> str:
 
 
 def apply(tool: str, track: str, *, pins: Pins | None = None) -> Path:
-    """Re-check out the pin and `git am` the series onto it."""
-    dest = fetch(tool, track, force=True, pins=pins)
+    """Re-check out the pin and `git am` the series onto it.
+
+    A forked tool's pin is already the tree to build: it is checked out, and
+    a series for it is an error (two sources for the same change).
+    """
+    pins = _pins(pins)
     patches = series(tool, track)
+    if patches and pins.forked(tool):
+        raise FpgatoolsError(
+            f"{series_dir(tool, track)} exists, but {tool} is built from its fork "
+            f"{pins.url(tool)}: remove the series"
+        )
+    dest = fetch(tool, track, force=True, pins=pins)
     if not patches:
         return dest
     # -c commit.gpgsign=false: the commits become patches, a developer's
@@ -165,6 +184,7 @@ def apply(tool: str, track: str, *, pins: Pins | None = None) -> Path:
 
 def export(tool: str, track: str, *, pins: Pins | None = None) -> list[Path]:
     """Rewrite `patches/<tool>/<track>/` from the commits above the pin."""
+    _no_series(tool, _pins(pins), "export")
     pin = _pins(pins).pin(tool, track)
     src = src_dir(tool, track)
     if not (src / ".git").exists():
@@ -220,8 +240,9 @@ def patch_subject(path: Path) -> str:
     return _SUBJECT_PREFIX_RE.sub("", subject, count=1).strip()
 
 
-def compare(tool: str) -> list[tuple[str | None, str | None]]:
+def compare(tool: str, *, pins: Pins | None = None) -> list[tuple[str | None, str | None]]:
     """Subjects of the stable and master series, paired by position."""
+    _no_series(tool, _pins(pins), "compare")
     stable, master = ([patch_subject(p) for p in series(tool, track)] for track in TRACKS)
     return list(zip_longest(stable, master))
 

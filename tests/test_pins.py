@@ -26,7 +26,10 @@ def test_real_pins_have_what_the_versions_need():
     assert real.names == ("openfpgaloader", "openocd", "rp1jtag", "piolib")
     for tool in ("openfpgaloader", "openocd"):
         assert real.pin(tool, "master").describe is not None
-        assert real.pin(tool, "stable").ref.startswith("v")
+        stable = real.pin(tool, "stable")
+        # a forked tool's stable ref is its integration branch; describe is the release
+        assert (stable.describe if real.forked(tool) else stable.ref).startswith("v")
+    assert real.forked("openfpgaloader") and not real.forked("openocd")
     assert real.pin("rp1jtag").describe is not None
     assert real.pin("piolib").date is not None
 
@@ -113,3 +116,39 @@ def test_load_from_string_and_missing_fields(tmp_path):
 def test_load_missing_file(tmp_path):
     with pytest.raises(FpgatoolsError, match="upstreams"):
         pins.load(tmp_path / "missing.toml")
+
+
+def test_forked_tool(tmp_path):
+    path = tmp_path / "upstreams.toml"
+    path.write_text("""
+[tool]
+url = "https://example.com/fork.git"
+upstream = "https://example.com/upstream.git"
+[tool.stable]
+ref = "ours/v1.0"
+commit = "a"
+describe = "v1.0"
+[tool.master]
+ref = "ours/master"
+commit = "b"
+describe = "v1.0-3-gccccccc"
+
+[lib]
+url = "https://example.com/lib.git"
+ref = "main"
+commit = "c"
+""")
+    p = pins.load(path)
+    assert p.forked("tool") and not p.forked("lib")
+    assert p.url("tool") == "https://example.com/fork.git"
+    assert p.upstream_url("tool") == "https://example.com/upstream.git"
+    assert p.pin("tool", "stable").describe == "v1.0"
+    with pytest.raises(FpgatoolsError, match="not forked"):
+        p.upstream_url("lib")
+
+
+def test_forked_library_refused(tmp_path):
+    path = tmp_path / "upstreams.toml"
+    path.write_text('[lib]\nurl = "u"\nupstream = "v"\nref = "main"\ncommit = "c"\n')
+    with pytest.raises(FpgatoolsError, match="upstream but no tracks"):
+        pins.load(path)

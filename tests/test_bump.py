@@ -49,7 +49,7 @@ def test_rewrite_pins_real_file():
     updates = [
         _update(pins, "openfpgaloader", "master", commit="a" * 40,
                 describe="v1.1.1-200-gaaaaaaa", date="2026-10-01"),
-        _update(pins, "openfpgaloader", "stable", ref="v1.2.0", commit="b" * 40),
+        _update(pins, "openfpgaloader", "stable", commit="b" * 40, describe="v1.2.0"),
         _update(pins, "openocd", "master"),  # unchanged
         _update(pins, "rp1jtag", None, commit="c" * 40),
     ]
@@ -58,7 +58,9 @@ def test_rewrite_pins_real_file():
     assert data["openfpgaloader"]["master"]["commit"] == "a" * 40
     assert data["openfpgaloader"]["master"]["describe"] == "v1.1.1-200-gaaaaaaa"
     assert data["openfpgaloader"]["master"]["date"] == "2026-10-01"
-    assert data["openfpgaloader"]["stable"] == {"ref": "v1.2.0", "commit": "b" * 40}
+    assert data["openfpgaloader"]["stable"] == {
+        "ref": pins.pin("openfpgaloader", "stable").ref, "commit": "b" * 40,
+        "describe": "v1.2.0"}
     assert data["openocd"]["master"] == tomllib.loads(text)["openocd"]["master"]
     assert data["rp1jtag"]["commit"] == "c" * 40
     assert data["rp1jtag"]["ref"] == "main"
@@ -197,3 +199,135 @@ def test_report_conflicts_empty_when_every_series_applies():
     r = bump.BumpReport(updates=[])
     r.applied[("openocd", "master")] = "OK"
     assert r.conflicts() == []
+
+
+def test_bump_forked_tool(tmp_path: Path):
+    """A forked tool follows its fork's integration branches; describe is the upstream base."""
+    up = tmp_path / "upstream"
+    up.mkdir()
+    git(up, "init", "-q", "-b", "master")
+    (up / "f").write_text("1\n")
+    git(up, "add", "f")
+    git(up, "commit", "-q", "-m", "one")
+    git(up, "tag", "-a", "v1.0.0", "-m", "v1.0.0")
+    (up / "f").write_text("2\n")
+    git(up, "commit", "-q", "-am", "two")
+    base = git(up, "rev-parse", "HEAD")
+    base_date = git(up, "log", "-1", "--format=%cd", "--date=short")
+    (up / "f").write_text("3\n")
+    git(up, "commit", "-q", "-am", "three")  # upstream moved on: the fork is 1 behind
+
+    fork = tmp_path / "fork"
+    git(tmp_path, "clone", "-q", str(up), str(fork))
+    git(fork, "checkout", "-q", "-b", "ours/master", base)
+    (fork / "g").write_text("feature\n")
+    git(fork, "add", "g")
+    git(fork, "commit", "-q", "-m", "feature")
+    master_head = git(fork, "rev-parse", "HEAD")
+    git(fork, "checkout", "-q", "-b", "ours/v1.0.0", "v1.0.0")
+    (fork / "g").write_text("backport\n")
+    git(fork, "add", "g")
+    git(fork, "commit", "-q", "-m", "backport")
+    stable_head = git(fork, "rev-parse", "HEAD")
+
+    pins_file = tmp_path / "upstreams.toml"
+    pins_file.write_text(f"""[openfpgaloader]
+url = "file://{fork}"
+upstream = "file://{up}"
+[openfpgaloader.stable]
+ref = "ours/v1.0.0"
+commit = "{'0' * 40}"
+describe = "v1.0.0"
+[openfpgaloader.master]
+ref = "ours/master"
+commit = "{'0' * 40}"
+describe = "v1.0.0"
+date = "2020-01-01"
+""")
+    report = bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
+    data = tomllib.loads(pins_file.read_text())
+    assert data["openfpgaloader"]["master"] == {
+        "ref": "ours/master", "commit": master_head,
+        "describe": git(up, "describe", "--tags", base), "date": base_date}
+    assert data["openfpgaloader"]["master"]["describe"].startswith("v1.0.0-1-g")
+    assert data["openfpgaloader"]["stable"] == {
+        "ref": "ours/v1.0.0", "commit": stable_head, "describe": "v1.0.0"}
+    assert report.conflicts() == []
+    assert "1 commits behind upstream" in report.markdown()
+
+    # upstream releases v1.1.0: the stable integration branch is now stale
+    git(up, "tag", "-a", "v1.1.0", "-m", "v1.1.0")
+    report = bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
+    assert report.conflicts() == [
+        "openfpgaloader/stable: RESTACK: ours/v1.0.0 is built on v1.0.0, upstream released "
+        "v1.1.0: restack the fork's backports on v1.1.0"]
+    assert "❌ `openfpgaloader/stable`" in report.markdown()
+
+
+def _fork_fixture(tmp_path: Path, *, unrelated_master: bool = False, stable_tag: bool = True,
+                  fork_tag: str | None = None):
+    """An upstream with v1.0.0 and a fork with ours/master and ours/stable."""
+    up = tmp_path / "upstream"
+    up.mkdir()
+    git(up, "init", "-q", "-b", "master")
+    (up / "f").write_text("1\n")
+    git(up, "add", "f")
+    git(up, "commit", "-q", "-m", "one")
+    git(up, "tag", "-a", "v1.0.0", "-m", "v1.0.0")
+    fork = tmp_path / "fork"
+    git(tmp_path, "clone", "-q", str(up), str(fork))
+    if unrelated_master:
+        git(fork, "checkout", "-q", "--orphan", "ours/master")
+        git(fork, "rm", "-q", "-rf", ".")
+    else:
+        git(fork, "checkout", "-q", "-b", "ours/master", "master")
+    (fork / "g").write_text("feature\n")
+    git(fork, "add", "g")
+    git(fork, "commit", "-q", "-m", "feature")
+    if stable_tag:
+        git(fork, "checkout", "-q", "-b", "ours/stable", "v1.0.0")
+    else:
+        git(fork, "checkout", "-q", "--orphan", "ours/stable")
+        git(fork, "rm", "-q", "-rf", ".")
+    (fork / "g").write_text("backport\n")
+    git(fork, "add", "g")
+    git(fork, "commit", "-q", "-m", "backport")
+    if fork_tag:  # the fork's branches are fetched without their tags: tag it upstream
+        stable = git(fork, "rev-parse", "HEAD")
+        git(up, "fetch", "-q", str(fork), "ours/stable")
+        git(up, "tag", "-a", fork_tag, "-m", fork_tag, stable)
+    pins_file = tmp_path / "upstreams.toml"
+    pins_file.write_text(f"""[openfpgaloader]
+url = "file://{fork}"
+upstream = "file://{up}"
+[openfpgaloader.stable]
+ref = "ours/stable"
+commit = "{'0' * 40}"
+describe = "v1.0.0"
+[openfpgaloader.master]
+ref = "ours/master"
+commit = "{'0' * 40}"
+describe = "v1.0.0"
+date = "2020-01-01"
+""")
+    return pins_file
+
+
+def test_bump_forked_missing_branch_fails(tmp_path: Path):
+    pins_file = _fork_fixture(tmp_path)
+    pins_file.write_text(pins_file.read_text().replace('ref = "ours/master"', 'ref = "ours/gone"'))
+    with pytest.raises(FpgatoolsError, match="has no branch ours/gone"):
+        bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
+
+
+def test_bump_forked_master_without_upstream_history_fails(tmp_path: Path):
+    pins_file = _fork_fixture(tmp_path, unrelated_master=True)
+    with pytest.raises(FpgatoolsError, match="shares no history"):
+        bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
+
+
+def test_bump_forked_stable_not_on_a_release_fails(tmp_path: Path):
+    # nearest tag "v1" matches describe's v[0-9]* but is no release tag
+    pins_file = _fork_fixture(tmp_path, stable_tag=False, fork_tag="v1")
+    with pytest.raises(FpgatoolsError, match="not a release tag"):
+        bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)

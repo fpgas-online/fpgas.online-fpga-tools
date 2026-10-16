@@ -13,16 +13,28 @@
 # need upstream history, only the one commit. `date` on the master entries is
 # informational (the bump PR shows it).
 
+# openFPGALoader is forked: every change we add is a feature branch in
+# mithro/openFPGALoader, and the fork's integration branches merge them all,
+# fpgas-online/master on upstream master and fpgas-online/v<release> on the
+# latest release (each branch's README lists the features). The build checks
+# out the pinned fork commit as it is: there is no patch series here.
+# `fpgatools bump` moves each pin to its branch head; `describe` is the
+# upstream commit (master) or release tag (stable) the branch is built on,
+# and master's `date` is that upstream commit's date. How the fork's
+# branches are rebased and rebuilt:
+# https://github.com/mithro/openFPGALoader/tree/fpgas-online/restack
 [openfpgaloader]
-url = "https://github.com/trabucayre/openFPGALoader.git"
+url = "https://github.com/mithro/openFPGALoader.git"
+upstream = "https://github.com/trabucayre/openFPGALoader.git"
 
 [openfpgaloader.stable]
-ref = "v1.1.1"
-commit = "85be4fa02b2dd6a83716d7dfac3d25bbd260ff7b"
+ref = "fpgas-online/v1.1.1"
+commit = "97c94b622e4c656ca5f2324f527f9b90a3f10db7"
+describe = "v1.1.1"
 
 [openfpgaloader.master]
-ref = "master"
-commit = "bf2b52916e7b6216ba1cc0b30933827d7735b05d"
+ref = "fpgas-online/master"
+commit = "df0e515ee8f5065251b1071b0a996f71ce9e2e5a"
 describe = "v1.1.1-182-gbf2b529"
 date = "2026-10-05"
 

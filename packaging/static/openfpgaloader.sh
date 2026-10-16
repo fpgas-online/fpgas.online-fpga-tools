@@ -27,7 +27,7 @@ static_build_rp1jtag
 static_force_static_libs
 
 src=$REPO/build/src/openfpgaloader-$track
-[ -f "$src/CMakeLists.txt" ] || { echo "ERROR: $src is not a patched tree (run fpgatools apply)" >&2; exit 1; }
+[ -f "$src/CMakeLists.txt" ] || { echo "ERROR: $src is not a source tree (run fpgatools apply)" >&2; exit 1; }
 rm -rf "$src/build-static"
 cmake -S "$src" -B "$src/build-static" \
 	-DCMAKE_BUILD_TYPE=Release \
@@ -75,7 +75,7 @@ unless told otherwise, so either install this tree under /usr or run:
 
     OPENFPGALOADER_SOJ_DIR=\$PWD/share/openFPGALoader bin/openFPGALoader -b netv2_100 --detect -f
 
-Source and patch series: https://github.com/fpgas-online/fpgas.online-fpga-tools
+Source: https://github.com/mithro/openFPGALoader (fpgas-online/ branches), built by https://github.com/fpgas-online/fpgas.online-fpga-tools
 EOF
 
 mkdir -p "$OUT"

@@ -1,5 +1,13 @@
 # fpgas.online-fpga-tools: patched openFPGALoader and OpenOCD builds
 
+> **17 Oct 2026:** openFPGALoader no longer has a patch series here. On Tim's
+> request of that day each feature is a branch of one to three patches in
+> mithro/openFPGALoader (rebased on upstream master, with a backport on the
+> latest release), merged into the fork's integration branches
+> `fpgas-online/master` and `fpgas-online/v<release>`, which `upstreams.toml`
+> pins and the build checks out as they are. What follows about the
+> openFPGALoader series is history; OpenOCD is unchanged.
+
 Date: 2026-09-22. Status: design, awaiting Tim's review (written autonomously
 from the request below; every decision marked **[decision]** is one Tim may
 want to override).

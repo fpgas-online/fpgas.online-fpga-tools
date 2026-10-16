@@ -7,9 +7,12 @@ changing structure; `README.md` is the user-facing description.
 ## Layout
 
 - `upstreams.toml` — every external input pinned by commit (tools, librp1jtag, piolib).
-- `patches/<tool>/<track>/NNNN-*.patch` — `git format-patch` series; tools are
-  `openfpgaloader` and `openocd`, tracks are `stable` (latest upstream release)
-  and `master` (upstream default branch).
+  openFPGALoader is *forked*: its pins are commits of the integration
+  branches `fpgas-online/master` and `fpgas-online/v<release>` of
+  mithro/openFPGALoader (`upstream` names trabucayre's), built as they are.
+- `patches/openocd/<track>/NNNN-*.patch` — `git format-patch` series, OpenOCD
+  only; tracks are `stable` (latest upstream release) and `master` (upstream
+  default branch).
 - `fpgatools/` — stdlib-only Python CLI: `fetch`, `apply`, `export`, `compare`,
   `version`, `debianize`, `bump`.
 - `packaging/` — debian templates (the two tools, and the shared libraries
@@ -42,7 +45,14 @@ shellcheck packaging/**/*.sh
 
 ## Working on the patch series
 
-Never edit a `.patch` file by hand. The series is the export of a git branch:
+openFPGALoader has none: a change is made on its feature branch in
+mithro/openFPGALoader (one to three upstream-quality patches on upstream
+master, plus a backport on the latest release), the integration branches are
+rebuilt there (procedure: the fork's `fpgas-online/restack` branch), and the
+daily bump moves the pins. `fpgatools apply`, `export` and `compare` refuse a
+series for a forked tool.
+
+For OpenOCD, never edit a `.patch` file by hand. The series is the export of a git branch:
 
 1. `uv run fpgatools apply <tool> <track>` gives a tree in `build/src/<tool>-<track>`
    at the pinned upstream commit with the series applied as commits.

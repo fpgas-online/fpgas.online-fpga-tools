@@ -4,6 +4,11 @@ Two shapes of table live in the file. A *tracked* upstream (the tools) has
 `url` at the top and one sub-table per track, `[name.stable]` and
 `[name.master]`. An *untracked* upstream (libraries) has `url`, `ref` and
 `commit` directly at the top level.
+
+A tracked tool whose table also has `upstream` is *forked*: `url` is our
+fork, whose integration branches (the `ref` of each track) already carry
+every change we add, and `upstream` is the project the fork follows. Its
+pins are fork commits; `describe` is the upstream base they are built on.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ DEFAULT_PATH = REPO / "upstreams.toml"
 @dataclass(frozen=True)
 class Upstream:
     url: str
+    upstream: str | None = None  # a forked tool: the project the fork follows
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,16 @@ class Pins:
     def url(self, name: str) -> str:
         return self.tool(name).url
 
+    def forked(self, name: str) -> bool:
+        """True when `url` is our fork of `upstream` (no patch series here)."""
+        return self.tool(name).upstream is not None
+
+    def upstream_url(self, name: str) -> str:
+        url = self.tool(name).upstream
+        if url is None:
+            raise FpgatoolsError(f"upstream {name!r} is not forked (no upstream url)")
+        return url
+
     def tracked(self, name: str) -> bool:
         self.tool(name)
         return (name, None) not in self.entries
@@ -79,9 +95,11 @@ class Pins:
         for name, table in data.items():
             if not isinstance(table, dict) or "url" not in table:
                 raise FpgatoolsError(f"upstreams: [{name}] has no url")
-            upstreams[name] = Upstream(url=str(table["url"]))
+            upstreams[name] = Upstream(url=str(table["url"]), upstream=_opt(table, "upstream"))
             sub_tables = {k: v for k, v in table.items() if isinstance(v, dict)}
             if "commit" in table:
+                if "upstream" in table:
+                    raise FpgatoolsError(f"upstreams: [{name}] has upstream but no tracks")
                 if sub_tables:
                     raise FpgatoolsError(
                         f"upstreams: [{name}] mixes a top-level commit with track tables"

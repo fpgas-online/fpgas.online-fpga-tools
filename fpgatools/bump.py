@@ -6,7 +6,14 @@ every [name.master] entry to the default branch head, moves [name.stable] to
 the newest release tag, moves the untracked pins (librp1jtag, piolib) to their
 branch heads, rewrites upstreams.toml in place and then tries to apply every
 patch series so the run can say which ones need a rebase.
+
+A forked tool (see pins.py) has no series: each track follows the head of
+its integration branch in our fork, and `describe` is the upstream commit
+that branch is built on (master) or the release tag it is built on
+(stable). A stable branch on an older release than upstream's newest is a
+conflict, as a series that no longer applies is: the fork needs a restack.
 """
+
 
 from __future__ import annotations
 
@@ -25,6 +32,9 @@ from fpgatools.version import parse_describe
 
 PINS_PATH = REPO / "upstreams.toml"
 META_ROOT = REPO / "build" / "meta"
+
+# How the openFPGALoader fork's integration branches are rebuilt.
+RESTACK_URL = "https://github.com/mithro/openFPGALoader/tree/fpgas-online/restack"
 
 # A release tag: v, digits and dots only. Excludes v2.0.0-rc1, nightly, ...
 RELEASE_TAG_RE = re.compile(r"^v\d+(\.\d+)+$")
@@ -68,16 +78,20 @@ class PinUpdate:
 class BumpReport:
     updates: list[PinUpdate] = field(default_factory=list)
     applied: dict[tuple[str, str], str] = field(default_factory=dict)  # "OK" or "CONFLICT: x"
+    # a forked tool's track whose integration branch needs a restack
+    stale: dict[tuple[str, str], str] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
         return any(u.changed for u in self.updates)
 
     def conflicts(self) -> list[str]:
-        """"<tool>/<track>: <status>" for each series that no longer applies."""
-        return [f"{tool}/{track}: {status}"
-                for (tool, track), status in sorted(self.applied.items())
-                if status != "OK"]
+        """"<tool>/<track>: <status>" for each series that no longer applies,
+        and each forked track whose integration branch needs a restack."""
+        found = {k: v for k, v in self.applied.items() if v != "OK"}
+        found.update({k: f"RESTACK: {v}" for k, v in self.stale.items()})
+        return [f"{tool}/{track}: {status}" for (tool, track), status in sorted(found.items())]
 
     def markdown(self) -> str:
         lines = ["## Upstream pins", ""]
@@ -87,11 +101,18 @@ class BumpReport:
             for (tool, track), status in sorted(self.applied.items()):
                 mark = "✅" if status == "OK" else "❌"
                 lines.append(f"- {mark} `{tool}/{track}`: {status}")
+        if self.stale or self.notes:
+            lines += ["", "## Forked tools", ""]
+            lines += [f"- ❌ `{tool}/{track}`: {msg}"
+                      for (tool, track), msg in sorted(self.stale.items())]
+            lines += [f"- {note}" for note in self.notes]
         lines += [
             "",
-            "A ❌ above means that series needs rebasing, and the pins stay where",
-            "they are until it does: `fpgatools apply <tool> <track>` reproduces",
-            "the conflict locally, and CLAUDE.md says how to re-export the series.",
+            "A ❌ above means that series needs rebasing (or, for a forked tool,",
+            "its fork's integration branches need a restack), and the pins stay",
+            "where they are until it does: `fpgatools apply <tool> <track>`",
+            "reproduces a series conflict locally, CLAUDE.md says how to re-export",
+            f"a series, and {RESTACK_URL} how to restack the openFPGALoader fork.",
         ]
         return "\n".join(lines) + "\n"
 
@@ -146,9 +167,74 @@ def tag_commit(meta: Path, tag: str) -> str:
     return run_git(["rev-parse", f"{tag}^{{commit}}"], cwd=meta).stdout.strip()
 
 
-def new_pins(pins: Pins, root: Path = META_ROOT) -> list[PinUpdate]:
+def fork_meta_repo(name: str, upstream_url: str, fork_url: str, root: Path = META_ROOT) -> Path:
+    """A blobless bare clone of the upstream, with the fork's branches in refs/fork/."""
+    path = meta_repo(f"{name}-upstream", upstream_url, root)
+    run_git(["fetch", "-q", "--prune", "--force", fork_url, "+refs/heads/*:refs/fork/*"], cwd=path)
+    return path
+
+
+def release_base(meta: Path, commit: str) -> str:
+    """The release tag `commit` is built on: the nearest vX.Y[.Z] tag behind it."""
+    tag = run_git(["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--exclude", "*-rc*",
+                   "--exclude", "*rc[0-9]*", commit], cwd=meta).stdout.strip()
+    if not RELEASE_TAG_RE.match(tag):
+        raise FpgatoolsError(f"{meta.name}: {commit[:7]} is built on {tag!r}, not a release tag")
+    return tag
+
+
+def fork_head(meta: Path, name: str, ref: str, fork_url: str) -> str:
+    """The commit at the fork's branch `ref`; a missing branch is an error naming it."""
+    found = run_git(["rev-parse", "--verify", "-q", f"refs/fork/{ref}^{{commit}}"],
+                    cwd=meta, check=False)
+    if found.returncode != 0:
+        raise FpgatoolsError(f"{name}: the fork {fork_url} has no branch {ref}")
+    return found.stdout.strip()
+
+
+def fork_pins(name: str, pins: Pins, report: BumpReport,
+              root: Path = META_ROOT) -> list[PinUpdate]:
+    """Pins of a forked tool: the heads of its integration branches."""
+    meta = fork_meta_repo(name, pins.upstream_url(name), pins.url(name), root)
+    upstream_head = run_git(["rev-parse", "HEAD^{commit}"], cwd=meta).stdout.strip()
+    updates = []
+
+    old = pins.pin(name, "master")
+    head = fork_head(meta, name, old.ref, pins.url(name))
+    found = run_git(["merge-base", head, upstream_head], cwd=meta, check=False)
+    if found.returncode != 0:
+        raise FpgatoolsError(f"{name}: the fork's {old.ref} ({head[:7]}) shares no history with "
+                             f"upstream's default branch ({upstream_head[:7]})")
+    base = found.stdout.strip()
+    behind = int(run_git(["rev-list", "--count", f"{base}..{upstream_head}"],
+                         cwd=meta).stdout.strip())
+    if behind:
+        report.notes.append(f"`{name}/master`: {old.ref} is built on {base[:7]}, "
+                            f"{behind} commits behind upstream's {upstream_head[:7]}")
+    updates.append(PinUpdate(name, "master", old, Pin(
+        ref=old.ref, commit=head, describe=describe(meta, base),
+        date=commit_date(meta, base), subdir=old.subdir)))
+
+    old = pins.pin(name, "stable")
+    head = fork_head(meta, name, old.ref, pins.url(name))
+    tag = release_base(meta, head)
+    newest = newest_release_tag(tags(meta))
+    if newest is not None and newest != tag:
+        report.stale[(name, "stable")] = (f"{old.ref} is built on {tag}, upstream released "
+                                          f"{newest}: restack the fork's backports on {newest}")
+    updates.append(PinUpdate(name, "stable", old, Pin(
+        ref=old.ref, commit=head, describe=tag, subdir=old.subdir)))
+    return updates
+
+
+def new_pins(pins: Pins, root: Path = META_ROOT,
+             report: BumpReport | None = None) -> list[PinUpdate]:
+    report = report if report is not None else BumpReport()
     updates: list[PinUpdate] = []
     for name in pins.names:
+        if pins.forked(name):
+            updates += fork_pins(name, pins, report, root)
+            continue
         meta = meta_repo(name, pins.url(name), root)
         if pins.tracked(name):
             old = pins.pin(name, "master")
@@ -228,7 +314,8 @@ def verify_rewrite(text: str, updates: list[PinUpdate]) -> None:
 def bump(pins_path: Path = PINS_PATH, *, meta_root: Path = META_ROOT,
          apply_series: bool = True, write: bool = True) -> BumpReport:
     pins = load(pins_path)
-    report = BumpReport(updates=new_pins(pins, meta_root))
+    report = BumpReport()
+    report.updates = new_pins(pins, meta_root, report)
     if report.changed and write:
         text = rewrite_pins(pins_path.read_text(), report.updates)
         verify_rewrite(text, report.updates)
