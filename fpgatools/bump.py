@@ -183,6 +183,15 @@ def release_base(meta: Path, commit: str) -> str:
     return tag
 
 
+def fork_head(meta: Path, name: str, ref: str, fork_url: str) -> str:
+    """The commit at the fork's branch `ref`; a missing branch is an error naming it."""
+    found = run_git(["rev-parse", "--verify", "-q", f"refs/fork/{ref}^{{commit}}"],
+                    cwd=meta, check=False)
+    if found.returncode != 0:
+        raise FpgatoolsError(f"{name}: the fork {fork_url} has no branch {ref}")
+    return found.stdout.strip()
+
+
 def fork_pins(name: str, pins: Pins, report: BumpReport,
               root: Path = META_ROOT) -> list[PinUpdate]:
     """Pins of a forked tool: the heads of its integration branches."""
@@ -191,7 +200,7 @@ def fork_pins(name: str, pins: Pins, report: BumpReport,
     updates = []
 
     old = pins.pin(name, "master")
-    head = run_git(["rev-parse", f"refs/fork/{old.ref}^{{commit}}"], cwd=meta).stdout.strip()
+    head = fork_head(meta, name, old.ref, pins.url(name))
     found = run_git(["merge-base", head, upstream_head], cwd=meta, check=False)
     if found.returncode != 0:
         raise FpgatoolsError(f"{name}: the fork's {old.ref} ({head[:7]}) shares no history with "
@@ -207,7 +216,7 @@ def fork_pins(name: str, pins: Pins, report: BumpReport,
         date=commit_date(meta, base), subdir=old.subdir)))
 
     old = pins.pin(name, "stable")
-    head = run_git(["rev-parse", f"refs/fork/{old.ref}^{{commit}}"], cwd=meta).stdout.strip()
+    head = fork_head(meta, name, old.ref, pins.url(name))
     tag = release_base(meta, head)
     newest = newest_release_tag(tags(meta))
     if newest is not None and newest != tag:

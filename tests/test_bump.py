@@ -264,7 +264,8 @@ date = "2020-01-01"
     assert "❌ `openfpgaloader/stable`" in report.markdown()
 
 
-def _fork_fixture(tmp_path: Path, *, unrelated_master: bool = False, stable_tag: bool = True):
+def _fork_fixture(tmp_path: Path, *, unrelated_master: bool = False, stable_tag: bool = True,
+                  fork_tag: str | None = None):
     """An upstream with v1.0.0 and a fork with ours/master and ours/stable."""
     up = tmp_path / "upstream"
     up.mkdir()
@@ -291,6 +292,10 @@ def _fork_fixture(tmp_path: Path, *, unrelated_master: bool = False, stable_tag:
     (fork / "g").write_text("backport\n")
     git(fork, "add", "g")
     git(fork, "commit", "-q", "-m", "backport")
+    if fork_tag:  # the fork's branches are fetched without their tags: tag it upstream
+        stable = git(fork, "rev-parse", "HEAD")
+        git(up, "fetch", "-q", str(fork), "ours/stable")
+        git(up, "tag", "-a", fork_tag, "-m", fork_tag, stable)
     pins_file = tmp_path / "upstreams.toml"
     pins_file.write_text(f"""[openfpgaloader]
 url = "file://{fork}"
@@ -311,7 +316,7 @@ date = "2020-01-01"
 def test_bump_forked_missing_branch_fails(tmp_path: Path):
     pins_file = _fork_fixture(tmp_path)
     pins_file.write_text(pins_file.read_text().replace('ref = "ours/master"', 'ref = "ours/gone"'))
-    with pytest.raises(FpgatoolsError):
+    with pytest.raises(FpgatoolsError, match="has no branch ours/gone"):
         bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
 
 
@@ -322,6 +327,7 @@ def test_bump_forked_master_without_upstream_history_fails(tmp_path: Path):
 
 
 def test_bump_forked_stable_not_on_a_release_fails(tmp_path: Path):
-    pins_file = _fork_fixture(tmp_path, stable_tag=False)
-    with pytest.raises(FpgatoolsError):
+    # nearest tag "v1" matches describe's v[0-9]* but is no release tag
+    pins_file = _fork_fixture(tmp_path, stable_tag=False, fork_tag="v1")
+    with pytest.raises(FpgatoolsError, match="not a release tag"):
         bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
