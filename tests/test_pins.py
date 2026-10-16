@@ -113,3 +113,39 @@ def test_load_from_string_and_missing_fields(tmp_path):
 def test_load_missing_file(tmp_path):
     with pytest.raises(FpgatoolsError, match="upstreams"):
         pins.load(tmp_path / "missing.toml")
+
+
+def test_forked_tool(tmp_path):
+    path = tmp_path / "upstreams.toml"
+    path.write_text("""
+[tool]
+url = "https://example.com/fork.git"
+upstream = "https://example.com/upstream.git"
+[tool.stable]
+ref = "ours/v1.0"
+commit = "a"
+describe = "v1.0"
+[tool.master]
+ref = "ours/master"
+commit = "b"
+describe = "v1.0-3-gccccccc"
+
+[lib]
+url = "https://example.com/lib.git"
+ref = "main"
+commit = "c"
+""")
+    p = pins.load(path)
+    assert p.forked("tool") and not p.forked("lib")
+    assert p.url("tool") == "https://example.com/fork.git"
+    assert p.upstream_url("tool") == "https://example.com/upstream.git"
+    assert p.pin("tool", "stable").describe == "v1.0"
+    with pytest.raises(FpgatoolsError, match="not forked"):
+        p.upstream_url("lib")
+
+
+def test_forked_library_refused(tmp_path):
+    path = tmp_path / "upstreams.toml"
+    path.write_text('[lib]\nurl = "u"\nupstream = "v"\nref = "main"\ncommit = "c"\n')
+    with pytest.raises(FpgatoolsError, match="upstream but no tracks"):
+        pins.load(path)
