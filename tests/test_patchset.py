@@ -300,3 +300,39 @@ def test_cli_compare_ok(fx, capsys):
     assert cli.main(["compare", TOOL]) == 0
     out = capsys.readouterr().out
     assert "same" in out and "==" in out
+
+
+# --- a forked tool ------------------------------------------------------------
+
+
+def fork_pins(fx: Fixture) -> pins.Pins:
+    """The fixture's pins with openfpgaloader marked as a fork of itself."""
+    text = fx.pins_path.read_text().replace(
+        f'[{TOOL}]\nurl = "{fx.upstream.as_uri()}"',
+        f'[{TOOL}]\nurl = "{fx.upstream.as_uri()}"\nupstream = "{fx.upstream.as_uri()}"',
+    )
+    fx.pins_path.write_text(text)
+    return pins.load(fx.pins_path)
+
+
+def test_forked_apply_is_the_pin(fx):
+    forked = fork_pins(fx)
+    d = patchset.apply(TOOL, "master", pins=forked)
+    assert head(d) == fx.c2
+
+
+def test_forked_apply_refuses_a_series(fx):
+    forked = fork_pins(fx)
+    sdir = patchset.series_dir(TOOL, "master")
+    sdir.mkdir(parents=True)
+    (sdir / "0001-x.patch").write_text("x\n")
+    with pytest.raises(FpgatoolsError, match="remove the series"):
+        patchset.apply(TOOL, "master", pins=forked)
+
+
+def test_forked_export_and_compare_refused(fx):
+    forked = fork_pins(fx)
+    with pytest.raises(FpgatoolsError, match="no patch series to export"):
+        patchset.export(TOOL, "master", pins=forked)
+    with pytest.raises(FpgatoolsError, match="no patch series to compare"):
+        patchset.compare(TOOL, pins=forked)
