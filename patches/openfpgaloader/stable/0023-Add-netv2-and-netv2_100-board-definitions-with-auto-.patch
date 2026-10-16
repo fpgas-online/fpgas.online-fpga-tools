@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Tue, 17 Mar 2026 20:56:12 +1030
-Subject: [PATCH 23/32] Add netv2 and netv2_100 board definitions with
+Subject: [PATCH 23/33] Add netv2 and netv2_100 board definitions with
  auto-detected cable
 
 NeTV2 (Xilinx Artix-7) board definitions with built-in JTAG pin
