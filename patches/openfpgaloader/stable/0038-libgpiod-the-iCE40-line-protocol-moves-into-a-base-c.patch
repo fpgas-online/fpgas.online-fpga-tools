@@ -1,0 +1,675 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Sat, 17 Oct 2026 03:34:19 +1030
+Subject: [PATCH 38/40] libgpiod: the iCE40 line protocol moves into a base
+ class
+
+Ice40GpioSpi holds what every iCE40 SPI slave load over host GPIO lines
+shares: the pin list and its checks, hold_reset, cdone, take_bus, set_ss,
+release_bus and clocks, and the flash handling (only 0xAB, 0x05 and 0xB9
+can be sent), in terms of four primitives the backend gives: output(),
+input(), set() and get(). release_all() is the order the lines are given
+back in (bus lines, then CRESET_B only if none is stuck).
+
+LibgpiodIce40Spi is those primitives on libgpiod, plus its own write() and
+its one-call release of the bus on libgpiod v2. No behaviour changes: the
+sequence of line operations is the same, and the model test still holds.
+The next commit adds a second backend on the same base.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JG8Wtod8kFmcquwN34pFCa
+---
+ CMakeLists.txt           |   4 +-
+ src/ice40GpioSpi.cpp     | 208 +++++++++++++++++++++++++++++++++++++++
+ src/ice40GpioSpi.hpp     | 101 +++++++++++++++++++
+ src/libgpiodIce40Spi.cpp | 171 +-------------------------------
+ src/libgpiodIce40Spi.hpp |  49 ++-------
+ 5 files changed, 320 insertions(+), 213 deletions(-)
+ create mode 100644 src/ice40GpioSpi.cpp
+ create mode 100644 src/ice40GpioSpi.hpp
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9f71ebd..3e535f9 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -599,8 +599,8 @@ if (ENABLE_LIBGPIOD)
+ list(APPEND OPENFPGALOADER_SOURCE  src/libgpiodJtagBitbang.cpp)
+ list(APPEND OPENFPGALOADER_HEADERS src/libgpiodJtagBitbang.hpp)
+ # iCE40 SPI slave (SRAM) load over GPIO lines
+-list(APPEND OPENFPGALOADER_SOURCE  src/libgpiodIce40Spi.cpp)
+-list(APPEND OPENFPGALOADER_HEADERS src/libgpiodIce40Spi.hpp src/ice40SpiSlaveInterface.hpp)
++list(APPEND OPENFPGALOADER_SOURCE  src/ice40GpioSpi.cpp src/libgpiodIce40Spi.cpp)
++list(APPEND OPENFPGALOADER_HEADERS src/ice40GpioSpi.hpp src/libgpiodIce40Spi.hpp src/ice40SpiSlaveInterface.hpp)
+ endif()
+ 
+ # RemoteBitbang
+diff --git a/src/ice40GpioSpi.cpp b/src/ice40GpioSpi.cpp
+new file mode 100644
+index 0000000..bebfcbd
+--- /dev/null
++++ b/src/ice40GpioSpi.cpp
+@@ -0,0 +1,208 @@
++// SPDX-License-Identifier: Apache-2.0
++/*
++ * Copyright (C) 2026 Tim 'mithro' Ansell <me@mith.ro>
++ */
++
++#include "ice40GpioSpi.hpp"
++
++#include <unistd.h>
++
++#include <algorithm>
++#include <map>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++std::string Ice40GpioSpi::gpio_name(unsigned int offset)
++{
++	return "GPIO" + std::to_string(offset);
++}
++
++Ice40GpioSpi::Ice40GpioSpi(const ice40_gpio_pins_t &pins, int8_t verbose,
++		int max_offset):
++	_pins(pins), _verbose(verbose > 0)
++{
++	/* the order fomu_header_id.py (fpgas.online-test-designs) requests
++	 * and, on libgpiod v1, gives the lines back in: CRESET_B last
++	 */
++	const struct { const char *name; int offset; } lines[] = {
++		{"CDONE", _pins.cdone}, {"SPI_SS", _pins.ss}, {"SPI_SO", _pins.so},
++		{"SPI_SI", _pins.si}, {"SPI_SCK", _pins.sck},
++		{"/HOLD", _pins.holdn}, {"CRESET_B", _pins.creset}};
++	for (const auto &l : lines) {
++		if (l.offset == -1 && std::string(l.name) == "/HOLD")
++			continue;  // no flash /HOLD on this board
++		if (l.offset < 0 || l.offset >= max_offset)
++			throw std::runtime_error(std::string(l.name) + ": GPIO " +
++				std::to_string(l.offset) + " is outside of the valid range");
++		if (std::find(_lines.begin(), _lines.end(),
++				static_cast<unsigned int>(l.offset)) != _lines.end())
++			throw std::runtime_error(std::string(l.name) + ": " +
++				gpio_name(l.offset) + " is given to two signals");
++		_lines.push_back(l.offset);
++	}
++	_bus.push_back(_pins.ss);
++	_bus.push_back(_pins.so);
++	_bus.push_back(_pins.si);
++	_bus.push_back(_pins.sck);
++	if (_pins.holdn != -1)
++		_bus.push_back(_pins.holdn);
++}
++
++std::vector<std::string> Ice40GpioSpi::release(
++		const std::vector<unsigned int> &offsets)
++{
++	std::vector<std::string> stuck;
++	for (unsigned int offset : offsets) {
++		try {
++			input(offset);
++		} catch (std::exception &e) {
++			stuck.push_back(e.what());
++		}
++	}
++	return stuck;
++}
++
++/* every bus line an input, then CRESET_B, but only if none of the others
++ * is stuck
++ */
++std::vector<std::string> Ice40GpioSpi::release_all()
++{
++	std::vector<unsigned int> driven;
++	for (auto &o : _outputs)
++		if (o.first != static_cast<unsigned int>(_pins.creset))
++			driven.push_back(o.first);
++	std::vector<std::string> stuck = release(driven);
++	if (_outputs.count(_pins.creset)) {
++		if (stuck.empty()) {
++			std::vector<std::string> e = release({
++				static_cast<unsigned int>(_pins.creset)});
++			stuck.insert(stuck.end(), e.begin(), e.end());
++		} else {
++			stuck.push_back("CRESET_B was not let go before the lines "
++				"were given back");
++		}
++	}
++	return stuck;
++}
++
++void Ice40GpioSpi::hold_reset(bool hold)
++{
++	if (hold)
++		output(_pins.creset, false);
++	else
++		input(_pins.creset);
++}
++
++bool Ice40GpioSpi::cdone()
++{
++	return get(_pins.cdone);
++}
++
++/* flash opcodes this class can send: none of them writes the flash */
++#define FLASH_RELEASE_POWER_DOWN	0xAB
++#define FLASH_READ_STATUS_1			0x05
++#define FLASH_POWER_DOWN			0xB9
++#define FLASH_BUSY					0x01	/* status register 1 */
++#define FLASH_T_US					1000	/* tRES1, tDP: 3 us (W25Q128JV) */
++#define FLASH_BUSY_WAIT_MS			5000
++
++/* one flash command, SPI mode 0, msb first, on SPI_SO (the flash's DI),
++ * with the iCE40 in reset; with read, one byte back from SPI_SI (its DO)
++ */
++uint8_t Ice40GpioSpi::flash_command(uint8_t opcode, bool read)
++{
++	if (opcode != FLASH_RELEASE_POWER_DOWN &&
++			opcode != FLASH_READ_STATUS_1 && opcode != FLASH_POWER_DOWN)
++		throw std::logic_error("flash opcode not allowed: not sent");
++	uint8_t rx = 0;
++	set(_pins.ss, false);
++	for (int b = 7; b >= 0; b--) {
++		abort_check();
++		set(_pins.so, (opcode >> b) & 1);
++		set(_pins.sck, true);
++		set(_pins.sck, false);
++	}
++	set(_pins.so, false);
++	if (read) {
++		for (int b = 7; b >= 0; b--) {
++			abort_check();
++			set(_pins.sck, true);
++			rx = (rx << 1) | (get(_pins.si) ? 1 : 0);
++			set(_pins.sck, false);
++		}
++	}
++	set(_pins.ss, true);
++	return rx;
++}
++
++/* the flash in Deep Power-down, so that it ignores the load whatever its
++ * QE bit (with QE=1, /HOLD is a data pin and holding it low does not
++ * pause the flash): woken first, as a previous load leaves it asleep and
++ * a sleeping flash reads no status; an erase or program a design left
++ * going must end first (a busy flash ignores 0xB9)
++ */
++void Ice40GpioSpi::flash_power_down()
++{
++	output(_pins.so, false);
++	if (_pins.holdn != -1)
++		output(_pins.holdn, true);
++	flash_command(FLASH_RELEASE_POWER_DOWN, false);
++	usleep(FLASH_T_US);
++	uint8_t status = flash_command(FLASH_READ_STATUS_1, true);
++	for (int ms = 0; (status & FLASH_BUSY) && ms < FLASH_BUSY_WAIT_MS;
++			ms += 10) {
++		abort_check();
++		usleep(10000);
++		status = flash_command(FLASH_READ_STATUS_1, true);
++	}
++	if (status & FLASH_BUSY)
++		throw std::runtime_error("the flash stayed busy (status register 1 "
++			"bit 0) for " + std::to_string(FLASH_BUSY_WAIT_MS / 1000) +
++			" s: not put in power-down, nothing loaded");
++	flash_command(FLASH_POWER_DOWN, false);
++	usleep(FLASH_T_US);
++	input(_pins.so);
++}
++
++/* with the iCE40 in reset (its SPI pins released): SPI_SS high first, so
++ * nothing on the bus is selected while the other lines move, and SPI_SCK
++ * low (mode 0); a flash on the bus is put in Deep Power-down and /HOLD
++ * held low ("To program FPGA, keep SPI_IO3 LOW", Fomu EVT schematic; it
++ * pauses a flash whose QE bit is 0); SPI_SO is an input again; SPI_SI high
++ */
++void Ice40GpioSpi::take_bus()
++{
++	output(_pins.ss, true);
++	output(_pins.sck, false);
++	if (_pins.flash)
++		flash_power_down();
++	if (_pins.holdn != -1)
++		output(_pins.holdn, false);
++	output(_pins.si, true);
++}
++
++/* every bus line an input again, one by one in _bus order, all tried */
++void Ice40GpioSpi::release_bus()
++{
++	std::string why;
++	for (const std::string &s : release(_bus))
++		why += (why.empty() ? "" : "; ") + s;
++	if (!why.empty())
++		throw std::runtime_error(why);
++}
++
++void Ice40GpioSpi::set_ss(bool high)
++{
++	set(_pins.ss, high);
++}
++
++void Ice40GpioSpi::clocks(uint32_t nclk)
++{
++	set(_pins.si, true);
++	for (uint32_t i = 0; i < nclk; i++) {
++		abort_check();
++		set(_pins.sck, true);
++		set(_pins.sck, false);
++	}
++}
+diff --git a/src/ice40GpioSpi.hpp b/src/ice40GpioSpi.hpp
+new file mode 100644
+index 0000000..769ff5b
+--- /dev/null
++++ b/src/ice40GpioSpi.hpp
+@@ -0,0 +1,101 @@
++// SPDX-License-Identifier: Apache-2.0
++/*
++ * Copyright (C) 2026 Tim 'mithro' Ansell <me@mith.ro>
++ */
++
++#ifndef SRC_ICE40GPIOSPI_HPP_
++#define SRC_ICE40GPIOSPI_HPP_
++
++#include <cstdint>
++#include <map>
++#include <string>
++#include <vector>
++
++#include "ice40SpiSlaveInterface.hpp"
++
++/*!
++ * \brief the GPIO lines (offsets on one gpiochip, or BCM GPIO numbers) of an
++ *        iCE40 wired as an SPI slave to a Linux host. The host's output into
++ *        the iCE40's SPI_SI is `si`; `so` is the iCE40's SPI_SO. `flash`: an
++ *        SPI flash shares the bus (SPI_SS is its /CS, `si` its DO, `so` its
++ *        DI); `holdn` is its /HOLD, -1 when not wired.
++ */
++typedef struct {
++	int si;
++	int so;
++	int sck;
++	int ss;
++	int holdn;
++	int creset;
++	int cdone;
++	bool flash;
++} ice40_gpio_pins_t;
++
++/*!
++ * \file ice40GpioSpi.hpp
++ * \class Ice40GpioSpi
++ * \brief what every iCE40 SPI slave load over host GPIO lines shares,
++ *        whatever moves the lines (libgpiod, or the Pi's GPIO registers):
++ *        the line protocol, in terms of four primitives the backend gives:
++ *        output(), input(), set() and get().
++ *
++ * Every line is an input until the Ice40 load asks for it to be driven.
++ * Lines are set back to inputs in a fixed order: the bus lines (SPI_SS,
++ * SPI_SO, SPI_SI, SPI_SCK, then /HOLD) first, and CRESET_B only once none
++ * of them is still driven, so an iCE40 leaving reset masters its flash
++ * alone.
++ *
++ * A flash sharing the bus is put in Deep Power-down (0xB9) when the bus is
++ * taken, with the iCE40 in reset, and /HOLD is held low: the flash then
++ * ignores the load. It is not woken afterwards (the loaded design owns the
++ * pins then); an iCE40 booting from it sends the wake-up (0xAB) itself
++ * (TN-02001 9.4). Only 0xAB, 0x05 (read status) and 0xB9 can be sent: no
++ * command that writes the flash.
++ */
++class Ice40GpioSpi : public Ice40SpiSlaveInterface {
++	public:
++		void hold_reset(bool hold) override;
++		bool cdone() override;
++		void take_bus() override;
++		void release_bus() override;
++		void set_ss(bool high) override;
++		void clocks(uint32_t nclk) override;
++
++		static std::string gpio_name(unsigned int offset);
++
++	protected:
++		/*!
++		 * \param[in] max_offset: the lines must be 0 .. max_offset - 1
++		 * \throws when a line is out of range or given to two signals
++		 */
++		Ice40GpioSpi(const ice40_gpio_pins_t &pins, int8_t verbose,
++			int max_offset);
++
++		/* the backend's four primitives; each throws on failure */
++		virtual void output(unsigned int offset, bool level) = 0;
++		virtual void input(unsigned int offset) = 0;
++		virtual void set(unsigned int offset, bool level) = 0;
++		virtual bool get(unsigned int offset) = 0;
++
++		/* each of offsets an input, all tried: what failed, in words */
++		std::vector<std::string> release(
++			const std::vector<unsigned int> &offsets);
++		/* the lines driven now but CRESET_B, then CRESET_B if none of
++		 * those is stuck: what failed, in words */
++		std::vector<std::string> release_all();
++
++		ice40_gpio_pins_t _pins;
++		bool _verbose;
++		/* request order, also the v1 release order: CRESET_B last */
++		std::vector<unsigned int> _lines;
++		/* bus lines take_bus() drives, in release order */
++		std::vector<unsigned int> _bus;
++		/* the lines driven now, and their level */
++		std::map<unsigned int, bool> _outputs;
++
++	private:
++		uint8_t flash_command(uint8_t opcode, bool read);
++		void flash_power_down();
++};
++
++#endif  // SRC_ICE40GPIOSPI_HPP_
+diff --git a/src/libgpiodIce40Spi.cpp b/src/libgpiodIce40Spi.cpp
+index 56b054c..13c591c 100644
+--- a/src/libgpiodIce40Spi.cpp
++++ b/src/libgpiodIce40Spi.cpp
+@@ -22,7 +22,7 @@
+ 
+ static std::string gpio_name(unsigned int offset)
+ {
+-	return "GPIO" + std::to_string(offset);
++	return Ice40GpioSpi::gpio_name(offset);
+ }
+ 
+ static std::runtime_error gpio_error(const std::string &what,
+@@ -99,7 +99,7 @@ std::string LibgpiodIce40Spi::header_chip()
+ 
+ LibgpiodIce40Spi::LibgpiodIce40Spi(const ice40_gpio_pins_t &pins,
+ 		const std::string &dev, int8_t verbose):
+-	_pins(pins), _verbose(verbose > 0), _chip(NULL)
++	Ice40GpioSpi(pins, verbose, 1000), _chip(NULL)
+ #ifdef GPIOD_APIV2
+ 	, _request(NULL)
+ #endif
+@@ -110,32 +110,6 @@ LibgpiodIce40Spi::LibgpiodIce40Spi(const ice40_gpio_pins_t &pins,
+ 		throw std::runtime_error("invalid gpio chip " + chip_dev +
+ 			": should be /dev/gpiochipN");
+ 
+-	/* the order fomu_header_id.py (fpgas.online-test-designs) requests
+-	 * and, on libgpiod v1, gives the lines back in: CRESET_B last
+-	 */
+-	const struct { const char *name; int offset; } lines[] = {
+-		{"CDONE", _pins.cdone}, {"SPI_SS", _pins.ss}, {"SPI_SO", _pins.so},
+-		{"SPI_SI", _pins.si}, {"SPI_SCK", _pins.sck},
+-		{"/HOLD", _pins.holdn}, {"CRESET_B", _pins.creset}};
+-	for (const auto &l : lines) {
+-		if (l.offset == -1 && std::string(l.name) == "/HOLD")
+-			continue;  // no flash /HOLD on this board
+-		if (l.offset < 0 || l.offset >= 1000)
+-			throw std::runtime_error(std::string(l.name) + ": GPIO " +
+-				std::to_string(l.offset) + " is outside of the valid range");
+-		if (std::find(_lines.begin(), _lines.end(),
+-				static_cast<unsigned int>(l.offset)) != _lines.end())
+-			throw std::runtime_error(std::string(l.name) + ": " +
+-				gpio_name(l.offset) + " is given to two signals");
+-		_lines.push_back(l.offset);
+-	}
+-	_bus.push_back(_pins.ss);
+-	_bus.push_back(_pins.so);
+-	_bus.push_back(_pins.si);
+-	_bus.push_back(_pins.sck);
+-	if (_pins.holdn != -1)
+-		_bus.push_back(_pins.holdn);
+-
+ 	if (_verbose)
+ 		printInfo("libgpiod iCE40 SPI: " + chip_dev + ", SI=" +
+ 			gpio_name(_pins.si) + " SO=" + gpio_name(_pins.so) + " SCK=" +
+@@ -207,21 +181,7 @@ LibgpiodIce40Spi::~LibgpiodIce40Spi()
+  */
+ void LibgpiodIce40Spi::close_lines()
+ {
+-	std::vector<unsigned int> driven;
+-	for (auto &o : _outputs)
+-		if (o.first != static_cast<unsigned int>(_pins.creset))
+-			driven.push_back(o.first);
+-	std::vector<std::string> stuck = release(driven);
+-	if (_outputs.count(_pins.creset)) {
+-		if (stuck.empty()) {
+-			std::vector<std::string> e = release({
+-				static_cast<unsigned int>(_pins.creset)});
+-			stuck.insert(stuck.end(), e.begin(), e.end());
+-		} else {
+-			stuck.push_back("CRESET_B was not let go before the lines "
+-				"were given back");
+-		}
+-	}
++	std::vector<std::string> stuck = release_all();
+ #ifdef GPIOD_APIV2
+ 	if (_request)
+ 		gpiod_line_request_release(_request);
+@@ -354,116 +314,6 @@ bool LibgpiodIce40Spi::get(unsigned int offset)
+ #endif
+ }
+ 
+-std::vector<std::string> LibgpiodIce40Spi::release(
+-		const std::vector<unsigned int> &offsets)
+-{
+-	std::vector<std::string> stuck;
+-	for (unsigned int offset : offsets) {
+-		try {
+-			input(offset);
+-		} catch (std::exception &e) {
+-			stuck.push_back(e.what());
+-		}
+-	}
+-	return stuck;
+-}
+-
+-void LibgpiodIce40Spi::hold_reset(bool hold)
+-{
+-	if (hold)
+-		output(_pins.creset, false);
+-	else
+-		input(_pins.creset);
+-}
+-
+-bool LibgpiodIce40Spi::cdone()
+-{
+-	return get(_pins.cdone);
+-}
+-
+-/* flash opcodes this class can send: none of them writes the flash */
+-#define FLASH_RELEASE_POWER_DOWN	0xAB
+-#define FLASH_READ_STATUS_1			0x05
+-#define FLASH_POWER_DOWN			0xB9
+-#define FLASH_BUSY					0x01	/* status register 1 */
+-#define FLASH_T_US					1000	/* tRES1, tDP: 3 us (W25Q128JV) */
+-#define FLASH_BUSY_WAIT_MS			5000
+-
+-/* one flash command, SPI mode 0, msb first, on SPI_SO (the flash's DI),
+- * with the iCE40 in reset; with read, one byte back from SPI_SI (its DO)
+- */
+-uint8_t LibgpiodIce40Spi::flash_command(uint8_t opcode, bool read)
+-{
+-	if (opcode != FLASH_RELEASE_POWER_DOWN &&
+-			opcode != FLASH_READ_STATUS_1 && opcode != FLASH_POWER_DOWN)
+-		throw std::logic_error("flash opcode not allowed: not sent");
+-	uint8_t rx = 0;
+-	set(_pins.ss, false);
+-	for (int b = 7; b >= 0; b--) {
+-		abort_check();
+-		set(_pins.so, (opcode >> b) & 1);
+-		set(_pins.sck, true);
+-		set(_pins.sck, false);
+-	}
+-	set(_pins.so, false);
+-	if (read) {
+-		for (int b = 7; b >= 0; b--) {
+-			abort_check();
+-			set(_pins.sck, true);
+-			rx = (rx << 1) | (get(_pins.si) ? 1 : 0);
+-			set(_pins.sck, false);
+-		}
+-	}
+-	set(_pins.ss, true);
+-	return rx;
+-}
+-
+-/* the flash in Deep Power-down, so that it ignores the load whatever its
+- * QE bit (with QE=1, /HOLD is a data pin and holding it low does not
+- * pause the flash): woken first, as a previous load leaves it asleep and
+- * a sleeping flash reads no status; an erase or program a design left
+- * going must end first (a busy flash ignores 0xB9)
+- */
+-void LibgpiodIce40Spi::flash_power_down()
+-{
+-	output(_pins.so, false);
+-	if (_pins.holdn != -1)
+-		output(_pins.holdn, true);
+-	flash_command(FLASH_RELEASE_POWER_DOWN, false);
+-	usleep(FLASH_T_US);
+-	uint8_t status = flash_command(FLASH_READ_STATUS_1, true);
+-	for (int ms = 0; (status & FLASH_BUSY) && ms < FLASH_BUSY_WAIT_MS;
+-			ms += 10) {
+-		abort_check();
+-		usleep(10000);
+-		status = flash_command(FLASH_READ_STATUS_1, true);
+-	}
+-	if (status & FLASH_BUSY)
+-		throw std::runtime_error("the flash stayed busy (status register 1 "
+-			"bit 0) for " + std::to_string(FLASH_BUSY_WAIT_MS / 1000) +
+-			" s: not put in power-down, nothing loaded");
+-	flash_command(FLASH_POWER_DOWN, false);
+-	usleep(FLASH_T_US);
+-	input(_pins.so);
+-}
+-
+-/* with the iCE40 in reset (its SPI pins released): SPI_SS high first, so
+- * nothing on the bus is selected while the other lines move, and SPI_SCK
+- * low (mode 0); a flash on the bus is put in Deep Power-down and /HOLD
+- * held low ("To program FPGA, keep SPI_IO3 LOW", Fomu EVT schematic; it
+- * pauses a flash whose QE bit is 0); SPI_SO is an input again; SPI_SI high
+- */
+-void LibgpiodIce40Spi::take_bus()
+-{
+-	output(_pins.ss, true);
+-	output(_pins.sck, false);
+-	if (_pins.flash)
+-		flash_power_down();
+-	if (_pins.holdn != -1)
+-		output(_pins.holdn, false);
+-	output(_pins.si, true);
+-}
+-
+ /* v2: every bus line an input in one reconfigure call, so that the Pi
+  * stops driving them all at once (after a load the loaded design owns
+  * these pins). v1 requests each line on its own, so each takes its own
+@@ -492,11 +342,6 @@ void LibgpiodIce40Spi::release_bus()
+ 		throw std::runtime_error(why);
+ }
+ 
+-void LibgpiodIce40Spi::set_ss(bool high)
+-{
+-	set(_pins.ss, high);
+-}
+-
+ /* mode 0, msb first: SPI_SI changes as SPI_SCK falls and is captured as it
+  * rises. v2: one call sets SPI_SCK low and SPI_SI together, one call sets
+  * SPI_SCK high. v1: SPI_SI only when it changes, then SPI_SCK high, low.
+@@ -555,13 +400,3 @@ void LibgpiodIce40Spi::write(const uint8_t *data, uint32_t len)
+ 	_outputs[_pins.sck] = false;
+ 	_outputs[_pins.si] = si;
+ }
+-
+-void LibgpiodIce40Spi::clocks(uint32_t nclk)
+-{
+-	set(_pins.si, true);
+-	for (uint32_t i = 0; i < nclk; i++) {
+-		abort_check();
+-		set(_pins.sck, true);
+-		set(_pins.sck, false);
+-	}
+-}
+diff --git a/src/libgpiodIce40Spi.hpp b/src/libgpiodIce40Spi.hpp
+index b748b0c..782bf10 100644
+--- a/src/libgpiodIce40Spi.hpp
++++ b/src/libgpiodIce40Spi.hpp
+@@ -12,25 +12,7 @@
+ 
+ #include <gpiod.h>
+ 
+-#include "ice40SpiSlaveInterface.hpp"
+-
+-/*!
+- * \brief the GPIO lines (offsets on one gpiochip) of an iCE40 wired as an
+- *        SPI slave to a Linux host. The host's output into the iCE40's
+- *        SPI_SI is `si`; `so` is the iCE40's SPI_SO. `flash`: an SPI
+- *        flash shares the bus (SPI_SS is its /CS, `si` its DO, `so` its DI);
+- *        `holdn` is its /HOLD, -1 when not wired.
+- */
+-typedef struct {
+-	int si;
+-	int so;
+-	int sck;
+-	int ss;
+-	int holdn;
+-	int creset;
+-	int cdone;
+-	bool flash;
+-} ice40_gpio_pins_t;
++#include "ice40GpioSpi.hpp"
+ 
+ /*!
+  * \file libgpiodIce40Spi.hpp
+@@ -52,7 +34,7 @@ typedef struct {
+  * (TN-02001 9.4). Only 0xAB, 0x05 (read status) and 0xB9 can be sent: no
+  * command that writes the flash.
+  */
+-class LibgpiodIce40Spi : public Ice40SpiSlaveInterface {
++class LibgpiodIce40Spi : public Ice40GpioSpi {
+ 	public:
+ 		/*!
+ 		 * \param[in] dev: /dev/gpiochipN; empty: the Raspberry Pi header's
+@@ -62,13 +44,8 @@ class LibgpiodIce40Spi : public Ice40SpiSlaveInterface {
+ 			const std::string &dev, int8_t verbose);
+ 		~LibgpiodIce40Spi();
+ 
+-		void hold_reset(bool hold) override;
+-		bool cdone() override;
+-		void take_bus() override;
+ 		void release_bus() override;
+-		void set_ss(bool high) override;
+ 		void write(const uint8_t *data, uint32_t len) override;
+-		void clocks(uint32_t nclk) override;
+ 
+ 		/*!
+ 		 * \brief the gpiochip of a Raspberry Pi's 40-pin header: the one
+@@ -79,29 +56,15 @@ class LibgpiodIce40Spi : public Ice40SpiSlaveInterface {
+ 		static std::string header_chip();
+ 
+ 	private:
+-		void output(unsigned int offset, bool level);
+-		void input(unsigned int offset);
+-		void set(unsigned int offset, bool level);
+-		bool get(unsigned int offset);
+-		/* each of offsets an input, all tried: what failed, in words */
+-		std::vector<std::string> release(
+-			const std::vector<unsigned int> &offsets);
++		void output(unsigned int offset, bool level) override;
++		void input(unsigned int offset) override;
++		void set(unsigned int offset, bool level) override;
++		bool get(unsigned int offset) override;
+ 		void close_lines();
+-		uint8_t flash_command(uint8_t opcode, bool read);
+-		void flash_power_down();
+ #ifdef GPIOD_APIV2
+ 		void reconfigure();
+ #endif
+ 
+-		ice40_gpio_pins_t _pins;
+-		bool _verbose;
+-		/* request order, also the v1 release order: CRESET_B last */
+-		std::vector<unsigned int> _lines;
+-		/* bus lines take_bus() drives, in release order */
+-		std::vector<unsigned int> _bus;
+-		/* the lines driven now, and their level */
+-		std::map<unsigned int, bool> _outputs;
+-
+ 		gpiod_chip *_chip;
+ #ifdef GPIOD_APIV2
+ 		gpiod_line_request *_request;

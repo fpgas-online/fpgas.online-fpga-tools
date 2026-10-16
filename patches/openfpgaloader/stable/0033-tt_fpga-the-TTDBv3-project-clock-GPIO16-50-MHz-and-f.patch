@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Fri, 16 Oct 2026 22:20:22 +1030
-Subject: [PATCH 33/37] tt_fpga: the TTDBv3 project clock (GPIO16, 50 MHz), and
+Subject: [PATCH 33/40] tt_fpga: the TTDBv3 project clock (GPIO16, 50 MHz), and
  fail when the board is not left as asked
 
 The post-programming step started the clock on GPIO0 at 10 MHz, which is
