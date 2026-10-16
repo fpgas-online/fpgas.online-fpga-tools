@@ -3,8 +3,9 @@ Upstream-Name: openFPGALoader
 Upstream-Contact: Gwenhael Goavec-Merou <gwenhael.goavec-merou@trabucayre.com>
 Source: https://github.com/trabucayre/openFPGALoader
 Comment: Built by https://github.com/fpgas-online/fpgas.online-fpga-tools from
- upstream @UPSTREAM_REF@ (@UPSTREAM_COMMIT@) with the patch series in that
- repository's patches/openfpgaloader/@TRACK@/ applied. The rp1pio cable
+ @UPSTREAM_URL@ branch @UPSTREAM_REF@ (@UPSTREAM_COMMIT@):
+ upstream openFPGALoader with the fpgas.online feature branches merged, each
+ listed with its branch in the README at the top of that commit. The rp1pio cable
  driver uses the shared librp1jtag0 (https://github.com/mithro/rp1-jtag,
  Apache-2.0), which uses libpio0 (https://github.com/raspberrypi/utils,
  BSD-3-Clause).
