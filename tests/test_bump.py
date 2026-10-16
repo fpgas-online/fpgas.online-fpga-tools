@@ -197,3 +197,66 @@ def test_report_conflicts_empty_when_every_series_applies():
     r = bump.BumpReport(updates=[])
     r.applied[("openocd", "master")] = "OK"
     assert r.conflicts() == []
+
+
+def test_bump_forked_tool(tmp_path: Path):
+    """A forked tool follows its fork's integration branches; describe is the upstream base."""
+    up = tmp_path / "upstream"
+    up.mkdir()
+    git(up, "init", "-q", "-b", "master")
+    (up / "f").write_text("1\n")
+    git(up, "add", "f")
+    git(up, "commit", "-q", "-m", "one")
+    git(up, "tag", "-a", "v1.0.0", "-m", "v1.0.0")
+    (up / "f").write_text("2\n")
+    git(up, "commit", "-q", "-am", "two")
+    base = git(up, "rev-parse", "HEAD")
+    base_date = git(up, "log", "-1", "--format=%cd", "--date=short")
+    (up / "f").write_text("3\n")
+    git(up, "commit", "-q", "-am", "three")  # upstream moved on: the fork is 1 behind
+
+    fork = tmp_path / "fork"
+    git(tmp_path, "clone", "-q", str(up), str(fork))
+    git(fork, "checkout", "-q", "-b", "ours/master", base)
+    (fork / "g").write_text("feature\n")
+    git(fork, "add", "g")
+    git(fork, "commit", "-q", "-m", "feature")
+    master_head = git(fork, "rev-parse", "HEAD")
+    git(fork, "checkout", "-q", "-b", "ours/v1.0.0", "v1.0.0")
+    (fork / "g").write_text("backport\n")
+    git(fork, "add", "g")
+    git(fork, "commit", "-q", "-m", "backport")
+    stable_head = git(fork, "rev-parse", "HEAD")
+
+    pins_file = tmp_path / "upstreams.toml"
+    pins_file.write_text(f"""[openfpgaloader]
+url = "file://{fork}"
+upstream = "file://{up}"
+[openfpgaloader.stable]
+ref = "ours/v1.0.0"
+commit = "{'0' * 40}"
+describe = "v1.0.0"
+[openfpgaloader.master]
+ref = "ours/master"
+commit = "{'0' * 40}"
+describe = "v1.0.0"
+date = "2020-01-01"
+""")
+    report = bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
+    data = tomllib.loads(pins_file.read_text())
+    assert data["openfpgaloader"]["master"] == {
+        "ref": "ours/master", "commit": master_head,
+        "describe": git(up, "describe", "--tags", base), "date": base_date}
+    assert data["openfpgaloader"]["master"]["describe"].startswith("v1.0.0-1-g")
+    assert data["openfpgaloader"]["stable"] == {
+        "ref": "ours/v1.0.0", "commit": stable_head, "describe": "v1.0.0"}
+    assert report.conflicts() == []
+    assert "1 commits behind upstream" in report.markdown()
+
+    # upstream releases v1.1.0: the stable integration branch is now stale
+    git(up, "tag", "-a", "v1.1.0", "-m", "v1.1.0")
+    report = bump.bump(pins_file, meta_root=tmp_path / "meta", apply_series=False)
+    assert report.conflicts() == [
+        "openfpgaloader/stable: RESTACK: ours/v1.0.0 is built on v1.0.0, upstream released "
+        "v1.1.0: restack the fork's backports on v1.1.0"]
+    assert "❌ `openfpgaloader/stable`" in report.markdown()
