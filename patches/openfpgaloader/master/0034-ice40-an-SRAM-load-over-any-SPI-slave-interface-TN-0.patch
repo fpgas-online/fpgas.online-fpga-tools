@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: "fpgas.online build" <builds@fpgas.online>
-Date: Fri, 16 Oct 2026 23:52:51 +1030
+From: Tim 'mithro' Ansell <me@mith.ro>
+Date: Sat, 17 Oct 2026 01:16:22 +1030
 Subject: [PATCH 34/37] ice40: an SRAM load over any SPI slave interface
  (TN-02001 Appendix A)
 
