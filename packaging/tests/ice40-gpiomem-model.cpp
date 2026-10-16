@@ -91,13 +91,26 @@ static void busy_wait_ns(double ns)
 	}
 }
 
+/* the five signals the load handles are blocked in this process now */
+static bool handled_signals_blocked()
+{
+	sigset_t cur;
+	sigprocmask(SIG_BLOCK, NULL, &cur);
+	for (int sig : {SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGPIPE})
+		if (!sigismember(&cur, sig))
+			return false;
+	return true;
+}
+
 /* the registers of a Pi's GPIO block, an iCE40 on the pins, and its flash */
 struct World {
 	Fault fault;
 	Host host;
 	uint32_t fsel[6] = {0, 0, 0, 0, 0, 0};
 	uint32_t latch = 0;  // what GPSET0 / GPCLR0 left for each pin
-	int writes = 0;
+	int writes = 0;  // every write, the zero-mask timing writes included
+	int pin_writes = 0;  // GPFSEL writes and GPSET/GPCLR writes of a mask
+	int unblocked_fsel_writes = 0;  // GPFSEL writes with a handled signal open
 	double vt = 0;  // the virtual clock, ns
 
 	// the iCE40
@@ -170,7 +183,13 @@ struct World {
 	void write(uint32_t offset, uint32_t value) {
 		writes++;
 		tick();
-		if (offset >= REG_GPFSEL0 && offset <= REG_GPFSEL5 && offset % 4 == 0) {
+		bool is_fsel = offset >= REG_GPFSEL0 && offset <= REG_GPFSEL5 &&
+			offset % 4 == 0;
+		if (is_fsel || value)
+			pin_writes++;
+		if (is_fsel && !handled_signals_blocked())
+			unblocked_fsel_writes++;
+		if (is_fsel) {
 			uint32_t old = fsel[offset / 4];
 			fsel[offset / 4] = value;
 			int sp = host.stick_pin;
@@ -372,7 +391,7 @@ struct Expect {
 	std::string flash;  // the flash commands the flash must have received
 	bool image;  // the iCE40 received the whole image, in order
 	bool cdone_after;
-	bool pins_touched;  // false: no register was written at all
+	bool pins_touched;  // false: nothing that moves a pin was written
 	bool reset_held = false;  // CRESET_B still held low (a line is stuck)
 	bool timing = false;  // assert the SCK phases and period
 	bool pad = false;  // the load must have applied padding
@@ -457,8 +476,20 @@ static void run(const std::string &name, Fault f, const Host &host,
 	expect(w.in_reset == want.reset_held, want.reset_held ?
 		"CRESET_B still held low at the end (a line is stuck)" :
 		"CRESET_B let go at the end");
-	if (!want.pins_touched)
-		expect(w.writes == 0, "no register was written");
+	if (!want.pins_touched) {
+		expect(w.pin_writes == 0, "no register that moves a pin was written, "
+			"CRESET_B never touched");
+		expect(got.find("SPI lines released") == std::string::npos,
+			"nothing was driven, so nothing is said to be released");
+	}
+	expect(w.unblocked_fsel_writes == 0, "every GPFSEL write had the handled "
+		"signals blocked");
+	{
+		sigset_t cur;
+		sigprocmask(SIG_BLOCK, NULL, &cur);
+		expect(!sigismember(&cur, SIGINT) && !sigismember(&cur, SIGTERM),
+			"the signal mask is put back");
+	}
 	if (!want.stderr_has.empty())
 		expect(err_out.find(want.stderr_has) != std::string::npos,
 			"the destructor says \"" + want.stderr_has + "\"");
@@ -712,8 +743,9 @@ static void case_cpufreq_files()
 	}
 	std::cout << "  missing max: " << got << std::endl;
 	expect(got.find("cannot read " + d + "/cpuinfo_max_freq") !=
-		std::string::npos && got.find("nothing is driven") != std::string::npos,
-		"a missing cpufreq file stops loud, naming the file");
+		std::string::npos && got.find("nothing is driven") != std::string::npos &&
+		got.find("cpufreq driver loaded") != std::string::npos,
+		"a missing cpufreq file stops loud, naming the file and the remedy");
 	write_file(d + "/cpuinfo_max_freq", "not a number\n");
 	got.clear();
 	try {
@@ -779,19 +811,16 @@ int main()
 	Host slow_min = steady;
 	slow_min.access_ns = 400;
 	run("a bit takes over 1 us at the minimum clock", NO_FAULT, slow_min,
-		{"would fall under the iCE40's 1 MHz minimum", "0xAB, 0x05, 0xB9",
-		false, true, true});
+		{"would fall under the iCE40's 1 MHz minimum", "", false, true, false});
 
 	Host nofreq = steady;
 	nofreq.freq_throws = true;
 	run("cpufreq cannot be read", NO_FAULT, nofreq,
-		{"cannot read cpufreq (modelled)", "0xAB, 0x05, 0xB9", false, true,
-		true});
+		{"cannot read cpufreq (modelled)", "", false, true, false});
 	Host flap = steady;
 	flap.freq_flaps = true;
 	run("the CPU clock never holds still", NO_FAULT, flap,
-		{"the CPU clock kept changing", "0xAB, 0x05, 0xB9", false, true,
-		true});
+		{"the CPU clock kept changing", "", false, true, false});
 
 	run("configuration refused", CONFIG_FAILS, steady,
 		{"CDONE stayed low after the image", "0xAB, 0x05, 0xB9", true, true, true});
@@ -832,7 +861,7 @@ int main()
 		"read back 1", "0xAB, 0x05, 0xB9", false, false, true};
 	stuck_e.reset_held = true;
 	stuck_e.fsel_back = false;
-	stuck_e.stderr_has = "pin(s) did not read back";
+	stuck_e.stderr_has = "pinctrl get 17";
 	run("GPFSEL of SPI_SO stays an output (restore readback)", NO_FAULT,
 		stuck, stuck_e);
 
