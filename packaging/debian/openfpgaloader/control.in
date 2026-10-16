@@ -33,10 +33,13 @@ Description: openFPGALoader with the fpgas.online patch series (@TRACK@)
   * tt_fpga board / tt_micropython cable for the Tiny Tapeout FPGA Demo
     Board (iCE40UP5K behind an RP2040/RP2350 running MicroPython);
   * fomu_evt_header board: an iCE40 SRAM load as an SPI slave over
-    Raspberry Pi GPIO lines (libgpiod cable), for the Fomu EVT on a Pi
-    header. Untested on hardware: libgpiod on a Pi 3 may not reach the
-    iCE40's 1 MHz minimum configuration clock, and then the load stops
-    with the measured rate and the board boots its flash again;
+    Raspberry Pi GPIO lines, for the Fomu EVT on a Pi header: through the
+    GPIO registers (/dev/gpiomem) on a Raspberry Pi 1-4, through libgpiod
+    elsewhere. libgpiod measured under the iCE40's 1 MHz minimum
+    configuration clock on a Pi 3 Model B+, which is why the registers are
+    used there; the /dev/gpiomem path is not yet measured on hardware. A
+    load whose clock leaves 1 to 25 MHz stops with the measured rate and
+    the board boots its flash again;
   * --flash-info / --flash-info-json: SPI flash JEDEC id, SFDP parameters
     and the flash's factory unique id.
  .
