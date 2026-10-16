@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tim 'mithro' Ansell <me@mith.ro>
 Date: Sat, 17 Oct 2026 03:46:22 +1030
-Subject: [PATCH 39/40] gpiomem: the iCE40 SPI slave load through a Raspberry
+Subject: [PATCH 39/43] gpiomem: the iCE40 SPI slave load through a Raspberry
  Pi's GPIO registers
 
 A hardware trial on a Pi 3 Model B+ measured libgpiod at 0.440 MHz SPI_SCK,
