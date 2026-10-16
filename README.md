@@ -21,7 +21,7 @@ The exact pins are in [`upstreams.toml`](upstreams.toml).
 | **RP1 PIO JTAG** on a Raspberry Pi 5: the RP1's PIO block shifts data instead of bit-banging PCIe-attached GPIOs (rp1-jtag's benchmarks: 6.5 s instead of 39 s for a 3.8 MB Artix-7 bitstream) | `rp1pio` cable | `rp1_pio_jtag` adapter, `interface/raspberrypi-rp1-pio.cfg` | not upstream; drivers are the copies [mithro/rp1-jtag](https://github.com/mithro/rp1-jtag) ships; they call librp1jtag (the `librp1jtag0` package here, linked in statically in the static binaries) |
 | **Kosagi NeTV2** on a Pi header, old-style (Pi 1-4 `bcm2835gpio`) and new-style (Pi 5 RP1 PIO), plus `linuxgpiod`, a picker and a jtagspi flash variant | `netv2`, `netv2_100` boards with GPIO cable auto-detection | `board/netv2-rpi*.cfg` | openFPGALoader boards: [PR #643](https://github.com/trabucayre/openFPGALoader/pull/643) open |
 | **Tiny Tapeout FPGA Demo Board** (iCE40UP5K behind an RP2040/RP2350 running MicroPython) | `tt_fpga` board, `tt_micropython` cable | | not upstream ([mithro/openFPGALoader tt-fpga-support](https://github.com/mithro/openFPGALoader/tree/tt-fpga-support)) |
-| **iCE40 SRAM load over Raspberry Pi GPIO** (SPI slave, TN-02001 Appendix A) for the Fomu EVT on a Pi header: the bitstream bit-banged through libgpiod on GPIO9 (SPI_SI, the Pi's MISO pin, which its SPI hardware cannot drive), CDONE checked before and after, the flash put in Deep Power-down and never written, and a load whose clock falls below the iCE40's 1 MHz slave configuration minimum stopped | `fomu_evt_header` board, `libgpiod` cable in SPI mode | | not upstream (fpgas.online-fpga-tools #19) |
+| **iCE40 SRAM load over Raspberry Pi GPIO, untested on hardware** (SPI slave, TN-02001 Appendix A) for the Fomu EVT on a Pi header: the bitstream bit-banged through libgpiod on GPIO9 (SPI_SI, the Pi's MISO pin, which its SPI hardware cannot drive), CDONE checked before and after, the flash put in Deep Power-down and never written. **It may never succeed:** libgpiod on a Pi 3 very likely cannot reach the iCE40's 1 MHz minimum slave configuration clock (not measured). Then the load stops with the measured rate and the board boots its flash again; so does a load stopped by SIGINT/SIGTERM (not SIGKILL) | `fomu_evt_header` board, `libgpiod` cable in SPI mode | | not upstream (fpgas.online-fpga-tools #19) |
 | **SPI flash info and unique ID**: JEDEC id, SFDP parameters, factory unique id, machine-readable output | `--flash-info`, `--flash-info-json` | | not upstream ([mithro/openFPGALoader flash-info](https://github.com/mithro/openFPGALoader/tree/flash-info)) |
 | **Device DNA / TraceID**: die-level identifiers | `--read-dna` (upstream) | `fpga/xilinx-dna.cfg` (upstream), `fpga/lattice-ecp5-traceid.cfg` (patch) | DNA is upstream in both; ECP5 TraceID is a patch |
 | Version strings that name this build | `--Version` prints `v<version>` | `openocd -v` prints the fpgas.online suffix | packaging glue |
@@ -40,9 +40,10 @@ static build the `linuxgpiod` adapter is left out. `rp1_pio_jtag` (Pi 5) and
 keep `linuxgpiod`; the `master` track has it everywhere.
 
 Series: [`patches/openfpgaloader/`](patches/openfpgaloader),
-[`patches/openocd/`](patches/openocd). Both tracks carry the same series; where the code differs between the upstream release
-and master (a class rename, a moved Tcl file, an older adapter table) the two
-copies differ in content but never in what they do.
+[`patches/openocd/`](patches/openocd). Both tracks carry the same series;
+where the code differs between the upstream release and master (a class
+rename, a moved Tcl file, an older adapter table) the two copies differ in
+content but never in what they do.
 
 ## Versioning
 
@@ -181,8 +182,11 @@ sudo openFPGALoader -b netv2_100 --detect -f --flash-info --flash-info-json flas
 # Tiny Tapeout FPGA Demo Board over USB
 openFPGALoader -b tt_fpga design.bin
 
-# Fomu EVT on a Raspberry Pi header: iCE40 SRAM load over GPIO (libgpiod)
-sudo openFPGALoader -b fomu_evt_header design.bin
+# Fomu EVT on a Raspberry Pi header: iCE40 SRAM load over GPIO (libgpiod).
+# Untested on hardware; may stop below the iCE40's 1 MHz minimum clock.
+# A time limit must end it with SIGTERM, never SIGKILL (which leaves the
+# iCE40 unconfigured until a power cycle):
+sudo timeout -k 30 120 openFPGALoader -b fomu_evt_header design.bin
 ```
 
 ## Repository layout

@@ -34,7 +34,9 @@ Description: openFPGALoader with the fpgas.online patch series (@TRACK@)
     Board (iCE40UP5K behind an RP2040/RP2350 running MicroPython);
   * fomu_evt_header board: an iCE40 SRAM load as an SPI slave over
     Raspberry Pi GPIO lines (libgpiod cable), for the Fomu EVT on a Pi
-    header;
+    header. Untested on hardware: libgpiod on a Pi 3 may not reach the
+    iCE40's 1 MHz minimum configuration clock, and then the load stops
+    with the measured rate and the board boots its flash again;
   * --flash-info / --flash-info-json: SPI flash JEDEC id, SFDP parameters
     and the flash's factory unique id.
  .

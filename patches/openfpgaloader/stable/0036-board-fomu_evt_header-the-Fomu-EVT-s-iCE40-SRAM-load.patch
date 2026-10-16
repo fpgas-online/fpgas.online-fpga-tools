@@ -11,20 +11,26 @@ cable libgpiod. fomu_evt_header is the Fomu EVT on a Raspberry Pi header
 Pi's MISO pin: the Pi's SPI0 cannot drive it), SPI_SO 10, flash /HOLD 25.
 
 With the libgpiod cable, SPI mode goes to gpio_spi_comm(): an iCE40
-board is required, the load is SRAM only and the default (-f, --verify,
---detect, --reset and the flash options are refused), and --pins is
-MOSI:MISO:SCK:CS[:HOLDN], MOSI being the host's output into SPI_SI. A
-GPIO-wired board with any other cable is refused, so its GPIO numbers
-are never used as FTDI pin masks. Failures exit non-zero.
+board defined with SPI_GPIO_BOARD is required, the load is SRAM only and
+the default, and --pins is MOSI:MISO:SCK:CS[:HOLDN], MOSI being the
+host's output into SPI_SI. Refused rather than ignored: -f, --verify,
+--detect, --reset and the flash options; --freq (the rate is measured,
+not set); a non-zero --offset; --secondary-bitstream.
+
+Pin numbers never cross over: a GPIO-wired board with any other cable is
+refused, and so is any other board (ice40_generic's FTDI masks, say)
+with the libgpiod cable. --pins values outside 0-255 are refused for
+every cable, rather than truncated to another pin by the 8-bit fields.
+Failures exit non-zero.
 
     openFPGALoader -b fomu_evt_header design.bin
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01JG8Wtod8kFmcquwN34pFCa
 ---
- src/board.hpp |  15 +++++++
- src/main.cpp  | 110 +++++++++++++++++++++++++++++++++++++++++++++++++-
- 2 files changed, 123 insertions(+), 2 deletions(-)
+ src/board.hpp |  15 ++++++
+ src/main.cpp  | 147 +++++++++++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 160 insertions(+), 2 deletions(-)
 
 diff --git a/src/board.hpp b/src/board.hpp
 index a4b229d..05c9cfb 100644
@@ -60,7 +66,7 @@ index a4b229d..05c9cfb 100644
  			DBUS7, DBUS6, 0,
  			DBUS4, DBUS0, DBUS1, DBUS2,
 diff --git a/src/main.cpp b/src/main.cpp
-index 7ac5b7f..cfbc39d 100644
+index 7ac5b7f..4a45b4e 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -49,6 +49,9 @@
@@ -73,15 +79,16 @@ index 7ac5b7f..cfbc39d 100644
  #ifdef ENABLE_LATTICESSPI_SUPPORT
  #include "latticeSSPI.hpp"
  #endif
-@@ -132,6 +135,7 @@ struct arguments {
+@@ -132,6 +135,8 @@ struct arguments {
  	std::string user_flash;
  	bool flash_info;
  	std::string flash_info_json;
 +	size_t pin_count; /* how many --pins were given */
++	bool freq_given; /* --freq was given */
  };
  
  int run_xvc_server(const struct arguments &args, const cable_t &cable,
-@@ -141,6 +145,10 @@ int run_xvc_server(const struct arguments &args, const cable_t &cable,
+@@ -141,6 +146,10 @@ int run_xvc_server(const struct arguments &args, const cable_t &cable,
  int spi_comm(struct arguments args, const cable_t &cable,
  	const jtag_pins_conf_t *pins_config, target_board_t *board);
  #endif
@@ -92,17 +99,18 @@ index 7ac5b7f..cfbc39d 100644
  
  int parse_opt(int argc, char **argv, struct arguments *args,
  	jtag_pins_conf_t *pins_config);
-@@ -202,7 +210,8 @@ int main(int argc, char **argv)
+@@ -202,7 +211,9 @@ int main(int argc, char **argv)
  			false, false, "", // read_dna, read_xadc, read_register
  			"", // user_flash
  			false, // flash_info
 -			"" // flash_info_json
 +			"", // flash_info_json
-+			0 // pin_count
++			0, // pin_count
++			false // freq_given
  	};
  	/* parse arguments */
  	int ret = parse_opt(argc, argv, &args, &pins_config);
-@@ -357,8 +366,25 @@ int main(int argc, char **argv)
+@@ -357,8 +368,25 @@ int main(int argc, char **argv)
  	/* ----------------------- */
  	/* SPI FLASH direct access */
  	/* ----------------------- */
@@ -129,7 +137,7 @@ index 7ac5b7f..cfbc39d 100644
  #else
  		printError("SPI Flash Direct access: disabled at build time");
  		return EXIT_FAILURE;
-@@ -983,6 +1009,85 @@ int spi_comm(struct arguments args, const cable_t &cable,
+@@ -983,6 +1011,111 @@ int spi_comm(struct arguments args, const cable_t &cable,
  }
  #endif
  
@@ -144,6 +152,16 @@ index 7ac5b7f..cfbc39d 100644
 +			board->fpga_part != "ice40") {
 +		printError("Error: the libgpiod cable in SPI mode loads an iCE40's "
 +			"SRAM only: give its board with -b (fomu_evt_header)");
++		return EXIT_FAILURE;
++	}
++	/* only a board wired to GPIO lines (SPI_GPIO_BOARD) gives GPIO numbers:
++	 * any other board's pins are FTDI masks, which as GPIO numbers would
++	 * drive unrelated lines
++	 */
++	if (board->cable_name != "libgpiod") {
++		printError("Error: board " + args.board + " is not wired to GPIO "
++			"lines: its pins are " + board->cable_name + " pin masks, not "
++			"GPIO numbers, so the libgpiod cable cannot use them");
 +		return EXIT_FAILURE;
 +	}
 +#ifndef ENABLE_ICE40_SUPPORT
@@ -168,6 +186,22 @@ index 7ac5b7f..cfbc39d 100644
 +	}
 +	if (args.bit_file.empty()) {
 +		printError("Error: no bitstream file");
++		return EXIT_FAILURE;
++	}
++	/* options this load would otherwise ignore */
++	if (args.freq_given) {
++		printError("Error: --freq: the GPIO bit-bang runs as fast as the host "
++			"can; it cannot be set, only measured (and it must be 1 to "
++			"25 MHz)");
++		return EXIT_FAILURE;
++	}
++	if (args.offset != 0) {
++		printError("Error: --offset: an SRAM load has no offset");
++		return EXIT_FAILURE;
++	}
++	if (!args.secondary_bit_file.empty()) {
++		printError("Error: --secondary-bitstream: an SRAM load takes one "
++			"bitstream");
 +		return EXIT_FAILURE;
 +	}
 +
@@ -215,7 +249,26 @@ index 7ac5b7f..cfbc39d 100644
  // parse double from string in engineering notation
  // can deal with postfixes k and m, add more when required
  static int parse_eng(string arg, double *dst) {
-@@ -1322,6 +1427,7 @@ int parse_opt(int argc, char **argv, struct arguments *args,
+@@ -1250,6 +1383,7 @@ int parse_opt(int argc, char **argv, struct arguments *args,
+ 				return -1;
+ 			}
+ 			args->freq = static_cast<uint32_t>(freq);
++			args->freq_given = true;
+ 		}
+ 
+ 		if (result.count("status-pin")) {
+@@ -1319,9 +1453,18 @@ int parse_opt(int argc, char **argv, struct arguments *args,
+ 					pin_num = pins_list[pins[i]];
+ 				}
+ 
++				/* the fields are 8 bits: a larger value would be truncated
++				 * to another pin
++				 */
++				if (pin_num < 0 || pin_num > 255) {
++					printError("Error: --pins: " + pins[i] +
++						" is outside 0 to 255");
++					return -1;
++				}
  				*pin_fields[i] = pin_num;
  			}
  			args->pin_config = true;

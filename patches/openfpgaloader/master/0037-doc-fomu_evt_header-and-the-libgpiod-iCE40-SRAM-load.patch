@@ -3,21 +3,27 @@ From: "fpgas.online build" <builds@fpgas.online>
 Date: Fri, 16 Oct 2026 23:53:08 +1030
 Subject: [PATCH 37/37] doc: fomu_evt_header and the libgpiod iCE40 SRAM load
 
-The board in boards.yml (Memory NT: not tried on hardware yet), the
-libgpiod cable's SPI load in cable.yml, and a section in the Lattice
-page: the wiring, the command, what is done to the flash, and the
-checks.
+The board in boards.yml (Memory NT: not tried on hardware), the libgpiod
+cable's SPI load in cable.yml, and a section in the Lattice page: the
+wiring, the command, what is done to the flash, and the checks.
+
+It says plainly that the load is untested on hardware and that libgpiod
+may well not reach the iCE40's 1 MHz minimum slave configuration clock
+(on a Pi 3 very likely not), in which case it stops with the rate and the
+iCE40 boots its flash again. It says what SIGINT/SIGTERM/SIGHUP do, that
+SIGKILL leaves the iCE40 unconfigured until a power cycle, and how a
+caller sets a time limit (timeout -k, never -s KILL).
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01JG8Wtod8kFmcquwN34pFCa
 ---
- doc/boards.yml          |  7 +++++++
+ doc/boards.yml          |  7 +++++
  doc/cable.yml           |  2 +-
- doc/vendors/lattice.rst | 46 +++++++++++++++++++++++++++++++++++++++++
- 3 files changed, 54 insertions(+), 1 deletion(-)
+ doc/vendors/lattice.rst | 65 +++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 73 insertions(+), 1 deletion(-)
 
 diff --git a/doc/boards.yml b/doc/boards.yml
-index d2eb798..9a925d7 100644
+index d2eb798..b7bf7a9 100644
 --- a/doc/boards.yml
 +++ b/doc/boards.yml
 @@ -472,6 +472,13 @@
@@ -25,7 +31,7 @@ index d2eb798..9a925d7 100644
    Constraints: Fomu-PVT
  
 +- ID: fomu_evt_header
-+  Description: Fomu EVT on a Raspberry Pi header (SPI slave SRAM load over GPIO, libgpiod)
++  Description: Fomu EVT on a Raspberry Pi header (SPI slave SRAM load over GPIO, libgpiod; untested on hardware, may be too slow)
 +  URL: https://github.com/im-tomu/fomu-hardware/tree/evt
 +  FPGA: iCE40UltraPlus UP5K
 +  Memory: NT
@@ -48,10 +54,10 @@ index ee16abe..2e26c4a 100644
  
  
 diff --git a/doc/vendors/lattice.rst b/doc/vendors/lattice.rst
-index 55c033d..647fe3b 100644
+index 55c033d..a9710ea 100644
 --- a/doc/vendors/lattice.rst
 +++ b/doc/vendors/lattice.rst
-@@ -73,6 +73,52 @@ Bin file load:
+@@ -73,6 +73,71 @@ Bin file load:
  
  Since it's a direct access to the flash (SPI) the ``-b`` option is required.
  
@@ -94,12 +100,31 @@ index 55c033d..647fe3b 100644
 +``--pins MOSI:MISO:SCK:CS[:HOLDN]`` overrides the SPI lines, ``MOSI`` being
 +the host's output into the iCE40's SPI_SI (``9:10:11:8:25`` for the Fomu EVT).
 +
++.. WARNING::
++  This load has not been tried on hardware. The iCE40 needs a slave
++  configuration clock of 1 to 25 MHz (DS-02008 Table 4.24), and libgpiod,
++  one or two system calls per clock edge, may not reach 1 MHz: on a Pi 3
++  (libgpiod 1.x) it very likely does not. Then the load stops with the
++  measured rate, and the iCE40 boots its flash again. Nothing here says the
++  load succeeds on any Pi.
++
 +The load needs a configured iCE40 to start from (CDONE high: it proves, by
 +CDONE falling under CRESET_B, that an iCE40 is held on that reset before any
-+bus line is driven), checks CDONE high after the image, and fails if the
-+achieved mean SPI_SCK rate is outside the data sheet's 1 to 25 MHz slave
-+configuration range (DS-02008 Table 4.24). After a failure the lines are
-+released and the iCE40 is reset to boot from its flash again.
++bus line is driven), and checks CDONE high after the image. The SPI_SCK rate
++is measured for every 4 KiB of the image and over the whole image; outside
++1 to 25 MHz the load stops (a stall stops it too: Table A.1 asks for a
++continuous clock). ``--freq`` and ``--offset`` are refused: the rate cannot
++be set, only measured. After a failure the lines are released and the iCE40
++is reset to boot from its flash again.
++
++SIGINT, SIGTERM and SIGHUP stop the load at the next bit and take the same
++path: the lines released, the iCE40 reset to boot from its flash, CDONE
++checked, a non-zero exit. SIGKILL cannot be caught: a load killed with it
++leaves the iCE40 unconfigured (CDONE low), and every later load and the
++Fomu's header check refuse to start until the board is power-cycled. A
++caller that needs a time limit must send SIGTERM and give the recovery time
++before any SIGKILL, for example ``timeout -k 30 120 openFPGALoader ...``
++(never ``timeout -s KILL``).
 +
  ECP5/ECP3/Certus-NX/CertusPro-NX/Crosslink-NX
  =============================================

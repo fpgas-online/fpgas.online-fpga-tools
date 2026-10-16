@@ -8,18 +8,23 @@ LibgpiodIce40Spi implements Ice40SpiSlaveInterface on a Linux host's GPIO
 lines (libgpiod v1 or v2, the build's existing ENABLE_LIBGPIOD support
 and GPIOD_APIV2 switch, as LibgpiodJtagBitbang). The chip is -d
 /dev/gpiochipN or, by default, the one Raspberry Pi header chip found by
-label (pinctrl-rp1, pinctrl-bcm2711, pinctrl-bcm2835); none or several
-is an error.
+label (pinctrl-rp1, pinctrl-bcm2711, pinctrl-bcm2835); paths naming the
+same device (a /dev/gpiochipN symlink) count once; none or several is an
+error.
 
 Line handling follows fpgas.online-test-designs' fomu_header_id.py:
 every line is requested as an input (bias left as it is) and driven
 only when asked; the bus lines go back to inputs before CRESET_B, which
 is let go only if none of them is stuck; on libgpiod v1 the lines are
 given back in request order, CRESET_B last. Every libgpiod call is
-checked and a failure throws.
+checked and a failure throws. On v2 the bus is given back in one
+reconfigure call, so the Pi stops driving every bus line at once when
+the loaded design takes the pins; v1 requests each line on its own, so
+there it takes one call per line.
 
 SPI mode 0, msb first. v2 sets SPI_SCK low and SPI_SI in one call and
-SPI_SCK high in the next; v1 sets SPI_SI only when it changes.
+SPI_SCK high in the next; v1 sets SPI_SI only when it changes. Every bit
+checks the load's stop flag (set by its signal handler).
 
 A flash sharing the bus is put in Deep Power-down (0xB9) with the iCE40
 in reset, after a wake-up (0xAB) and waiting for its BUSY bit to clear
@@ -34,9 +39,9 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01JG8Wtod8kFmcquwN34pFCa
 ---
  CMakeLists.txt           |   3 +
- src/libgpiodIce40Spi.cpp | 526 +++++++++++++++++++++++++++++++++++++++
- src/libgpiodIce40Spi.hpp | 114 +++++++++
- 3 files changed, 643 insertions(+)
+ src/libgpiodIce40Spi.cpp | 567 +++++++++++++++++++++++++++++++++++++++
+ src/libgpiodIce40Spi.hpp | 114 ++++++++
+ 3 files changed, 684 insertions(+)
  create mode 100644 src/libgpiodIce40Spi.cpp
  create mode 100644 src/libgpiodIce40Spi.hpp
 
@@ -56,10 +61,10 @@ index e8c8007..a218207 100644
  # RemoteBitbang
 diff --git a/src/libgpiodIce40Spi.cpp b/src/libgpiodIce40Spi.cpp
 new file mode 100644
-index 0000000..f0861d4
+index 0000000..56b054c
 --- /dev/null
 +++ b/src/libgpiodIce40Spi.cpp
-@@ -0,0 +1,526 @@
+@@ -0,0 +1,567 @@
 +// SPDX-License-Identifier: Apache-2.0
 +/*
 + * Copyright (C) 2026 Tim 'mithro' Ansell <me@mith.ro>
@@ -70,6 +75,7 @@ index 0000000..f0861d4
 +#include <dirent.h>
 +#include <errno.h>
 +#include <string.h>
++#include <sys/stat.h>
 +#include <unistd.h>
 +
 +#include <algorithm>
@@ -113,7 +119,15 @@ index 0000000..f0861d4
 +	std::sort(chips.begin(), chips.end());
 +
 +	std::vector<std::string> found, unreadable;
++	std::set<dev_t> seen;  // a /dev/gpiochipN symlink to another chip
 +	for (const std::string &path : chips) {
++		struct stat st;
++		if (stat(path.c_str(), &st) != 0) {
++			unreadable.push_back(path + ": " + strerror(errno));
++			continue;
++		}
++		if (!seen.insert(st.st_rdev).second)
++			continue;
 +		gpiod_chip *chip = gpiod_chip_open(path.c_str());
 +		if (!chip) {
 +			unreadable.push_back(path + ": " + strerror(errno));
@@ -453,6 +467,7 @@ index 0000000..f0861d4
 +	uint8_t rx = 0;
 +	set(_pins.ss, false);
 +	for (int b = 7; b >= 0; b--) {
++		abort_check();
 +		set(_pins.so, (opcode >> b) & 1);
 +		set(_pins.sck, true);
 +		set(_pins.sck, false);
@@ -460,6 +475,7 @@ index 0000000..f0861d4
 +	set(_pins.so, false);
 +	if (read) {
 +		for (int b = 7; b >= 0; b--) {
++			abort_check();
 +			set(_pins.sck, true);
 +			rx = (rx << 1) | (get(_pins.si) ? 1 : 0);
 +			set(_pins.sck, false);
@@ -485,6 +501,7 @@ index 0000000..f0861d4
 +	uint8_t status = flash_command(FLASH_READ_STATUS_1, true);
 +	for (int ms = 0; (status & FLASH_BUSY) && ms < FLASH_BUSY_WAIT_MS;
 +			ms += 10) {
++		abort_check();
 +		usleep(10000);
 +		status = flash_command(FLASH_READ_STATUS_1, true);
 +	}
@@ -514,15 +531,32 @@ index 0000000..f0861d4
 +	output(_pins.si, true);
 +}
 +
++/* v2: every bus line an input in one reconfigure call, so that the Pi
++ * stops driving them all at once (after a load the loaded design owns
++ * these pins). v1 requests each line on its own, so each takes its own
++ * call, in _bus order. If the one v2 call fails, the lines are tried one
++ * by one to find which is stuck, and the failure is reported either way.
++ */
 +void LibgpiodIce40Spi::release_bus()
 +{
-+	std::vector<std::string> stuck = release(_bus);
-+	if (!stuck.empty()) {
-+		std::string why;
-+		for (const std::string &s : stuck)
-+			why += (why.empty() ? "" : "; ") + s;
-+		throw std::runtime_error(why);
++	std::string why;
++#ifdef GPIOD_APIV2
++	std::map<unsigned int, bool> saved = _outputs;
++	for (unsigned int offset : _bus)
++		_outputs.erase(offset);
++	try {
++		reconfigure();
++		return;
++	} catch (std::exception &e) {
++		_outputs = saved;
++		why = std::string("releasing the bus lines in one call: ") + e.what();
 +	}
++#endif
++	std::vector<std::string> stuck = release(_bus);
++	for (const std::string &s : stuck)
++		why += (why.empty() ? "" : "; ") + s;
++	if (!why.empty())
++		throw std::runtime_error(why);
 +}
 +
 +void LibgpiodIce40Spi::set_ss(bool high)
@@ -544,6 +578,12 @@ index 0000000..f0861d4
 +	vals[0] = GPIOD_LINE_VALUE_INACTIVE;
 +	for (uint32_t i = 0; i < len; i++) {
 +		for (int b = 7; b >= 0; b--) {
++			if (abort_pending()) {
++				/* SPI_SCK is left high between bits here */
++				_outputs[_pins.sck] = (i != 0 || b != 7);
++				_outputs[_pins.si] = si;
++				abort_check();
++			}
 +			si = (data[i] >> b) & 1;
 +			vals[1] = si ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE;
 +			if (gpiod_line_request_set_values_subset(_request, 2,
@@ -562,6 +602,11 @@ index 0000000..f0861d4
 +	gpiod_line *si_line = _line[_pins.si];
 +	for (uint32_t i = 0; i < len; i++) {
 +		for (int b = 7; b >= 0; b--) {
++			if (abort_pending()) {
++				_outputs[_pins.sck] = false;
++				_outputs[_pins.si] = si;
++				abort_check();
++			}
 +			bool bit = (data[i] >> b) & 1;
 +			if (bit != si) {
 +				if (gpiod_line_set_value(si_line, bit) < 0)
@@ -582,6 +627,7 @@ index 0000000..f0861d4
 +{
 +	set(_pins.si, true);
 +	for (uint32_t i = 0; i < nclk; i++) {
++		abort_check();
 +		set(_pins.sck, true);
 +		set(_pins.sck, false);
 +	}
