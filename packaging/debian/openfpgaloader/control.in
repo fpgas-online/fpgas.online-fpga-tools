@@ -32,6 +32,9 @@ Description: openFPGALoader with the fpgas.online patch series (@TRACK@)
   * netv2 / netv2_100 boards with an auto-detected GPIO cable;
   * tt_fpga board / tt_micropython cable for the Tiny Tapeout FPGA Demo
     Board (iCE40UP5K behind an RP2040/RP2350 running MicroPython);
+  * fomu_evt_header board: an iCE40 SRAM load as an SPI slave over
+    Raspberry Pi GPIO lines (libgpiod cable), for the Fomu EVT on a Pi
+    header;
   * --flash-info / --flash-info-json: SPI flash JEDEC id, SFDP parameters
     and the flash's factory unique id.
  .

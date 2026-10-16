@@ -1,0 +1,512 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "fpgas.online build" <builds@fpgas.online>
+Date: Fri, 16 Oct 2026 23:52:51 +1030
+Subject: [PATCH 34/37] ice40: an SRAM load over any SPI slave interface
+ (TN-02001 Appendix A)
+
+The iCE40 SRAM load took an FtdiSpi only, with CRESET and CDONE on the
+FTDI's GPIO bank. Ice40SpiSlaveInterface gives the lines a slave
+configuration needs (SPI_SS, SPI_SCK and SPI_SI out, CRESET_B out, CDONE
+in, and taking/giving back the bus), and a second Ice40 constructor loads
+the SRAM over it. The FTDI path is unchanged: same constructor, same
+program_cram(), same commands.
+
+The procedure is TN-02001 (3.1) section 13.2 and Appendix A Table A.1,
+timings from DS-02008 (1.5) Table 4.24, and every step is checked:
+
+- CDONE must be high first (a configured iCE40), then fall with CRESET_B
+  held low for at least tCRESET_B (200 ns): otherwise no iCE40 is held on
+  that reset and no bus line is driven.
+- SPI_SS low, CRESET_B let go (the iCE40 enters SPI peripheral mode),
+  tCR_SCK (1200 us) waited; step 2: SPI_SS high, 8 dummy clocks, SPI_SS
+  low.
+- The image, msb first, with the mean SPI_SCK rate measured as it goes:
+  outside the Slave SPI write range of 1 to 25 MHz the load stops (TN
+  13.2: once the sync word is sent the clock "must be within the range
+  specified in the data sheet").
+- 100 clocks, CDONE must be high, 49 more (tDONE_IO), SPI_SS high, the
+  bus given back.
+
+On any failure the bus is given back first, CRESET_B is let go only if
+that worked, an iCE40 already in slave mode is reset to boot from its
+flash again, and the error says which of these happened. Flash access
+on this path is refused: SRAM only.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JG8Wtod8kFmcquwN34pFCa
+---
+ CMakeLists.txt                 |   2 +-
+ src/ice40.cpp                  | 251 ++++++++++++++++++++++++++++++++-
+ src/ice40.hpp                  |  13 ++
+ src/ice40SpiSlaveInterface.hpp |  66 +++++++++
+ 4 files changed, 329 insertions(+), 3 deletions(-)
+ create mode 100644 src/ice40SpiSlaveInterface.hpp
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ae76732..6aa3b13 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -424,7 +424,7 @@ if (${USE_LIBFTDI})
+ 	# ICE40 Driver.
+ 	if (ENABLE_ICE40_SUPPORT)
+ 		list(APPEND OPENFPGALOADER_SOURCE  src/ice40.cpp)
+-		list(APPEND OPENFPGALOADER_HEADERS src/ice40.hpp)
++		list(APPEND OPENFPGALOADER_HEADERS src/ice40.hpp src/ice40SpiSlaveInterface.hpp)
+ 		add_definitions(-DENABLE_ICE40_SUPPORT=1)
+ 		message("ICE40 support enabled")
+ 	else()
+diff --git a/src/ice40.cpp b/src/ice40.cpp
+index d6d9b98..9374711 100644
+--- a/src/ice40.cpp
++++ b/src/ice40.cpp
+@@ -8,7 +8,10 @@
+ #include <string.h>
+ #include <unistd.h>
+ 
++#include <chrono>
+ #include <iostream>
++#include <sstream>
++#include <stdexcept>
+ #include <string>
+ 
+ #include "display.hpp"
+@@ -23,8 +26,8 @@ Ice40::Ice40(FtdiSpi* spi, const std::string &filename,
+ 			Device::prog_type_t prg_type,
+ 			uint16_t rst_pin, uint16_t done_pin,
+ 			bool verify, int8_t verbose):
+-	Device(NULL, filename, file_type, verify, verbose), _rst_pin(rst_pin),
+-		_done_pin(done_pin)
++	Device(NULL, filename, file_type, verify, verbose), _slave(NULL),
++		_rst_pin(rst_pin), _done_pin(done_pin)
+ {
+ 	_spi = spi;
+ 	_spi->gpio_set_input(_done_pin);
+@@ -36,11 +39,29 @@ Ice40::Ice40(FtdiSpi* spi, const std::string &filename,
+ 		_mode = Device::MEM_MODE;
+ }
+ 
++Ice40::Ice40(Ice40SpiSlaveInterface *slave, const std::string &filename,
++			const std::string &file_type, int8_t verbose):
++	Device(NULL, filename, file_type, false, verbose), _spi(NULL),
++		_slave(slave), _rst_pin(0), _done_pin(0)
++{
++	_mode = Device::MEM_MODE;
++}
++
+ Ice40::~Ice40()
+ {}
+ 
++bool Ice40::flash_access_unsupported()
++{
++	printError("Error: this cable loads the iCE40's SRAM only: "
++		"no flash access");
++	return false;
++}
++
+ void Ice40::reset()
+ {
++	if (!_spi)
++		throw std::runtime_error("reset: not supported on this cable "
++			"(an SRAM load resets the iCE40 itself)");
+ 	uint32_t timeout = 1000;
+ 	_spi->gpio_clear(_rst_pin);
+ 	usleep(1000);
+@@ -111,8 +132,220 @@ bool Ice40::program_cram(const uint8_t *data, uint32_t length)
+ 	return (timeout == 0) ? false : true;
+ }
+ 
++/* iCE40 UltraPlus Family Data Sheet (FPGA-DS-02008 1.5), Table 4.24
++ * "sysCONFIG Port Timing Specifications": tCRESET_B min 200 ns; Slave SPI
++ * tCR_SCK min 1200 us; Slave SPI fMAX "CCLK clock frequency" Write min
++ * 1 MHz, max 25 MHz; tDONE_IO min 49 clock cycles.
++ */
++#define ICE40_CRESET_LOW_US		1000	/* tCRESET_B >= 200 ns */
++#define ICE40_CR_SCK_US			2000	/* tCR_SCK >= 1200 us, + guard */
++#define ICE40_SLAVE_SCK_MIN_HZ	1000000.0
++#define ICE40_SLAVE_SCK_MAX_HZ	25000000.0
++#define ICE40_DONE_IO_CLOCKS	49
++/* iCE40 Programming and Configuration (FPGA-TN-02001 3.1), Appendix A,
++ * Table A.1 "iCE40 SRAM Configuration Sequence"
++ */
++#define ICE40_SS_DUMMY_CLOCKS	8	/* step 2 */
++#define ICE40_POST_CLOCKS		100	/* step 5 */
++/* the achieved clock is the mean over the image so far: checked once the
++ * first ICE40_RATE_FIRST bytes are sent (so one scheduler pause at the
++ * start does not decide it), then after every ICE40_RATE_CHUNK bytes, and
++ * over the whole image
++ */
++#define ICE40_RATE_FIRST		16384
++#define ICE40_RATE_CHUNK		4096
++/* after a failed load: time for the iCE40 to boot from its flash again */
++#define ICE40_BOOT_WAIT_MS		3000
++
++static std::string mhz(double hz)
++{
++	std::ostringstream ss;
++	ss.precision(3);
++	ss << std::fixed << hz / 1e6 << " MHz";
++	return ss.str();
++}
++
++/* the mean SPI_SCK rate of the image so far must be inside the data sheet's
++ * Slave SPI write range (TN-02001 13.2: "Once the AP sends the 0x7EAA997E
++ * synchronization pattern, the generated SPI_SCK clock frequency must be
++ * within the range specified in the data sheet")
++ */
++static double check_rate(uint32_t bytes,
++		std::chrono::steady_clock::time_point start)
++{
++	std::chrono::duration<double> elapsed =
++		std::chrono::steady_clock::now() - start;
++	double hz = (bytes * 8.0) / elapsed.count();
++	if (hz < ICE40_SLAVE_SCK_MIN_HZ)
++		throw std::runtime_error("SPI_SCK " + mhz(hz) + " (mean over the first " +
++			std::to_string(bytes) + " bytes of the image): below the iCE40's "
++			"1 MHz minimum for a slave SPI configuration (DS-02008 Table 4.24); "
++			"this cable is too slow on this host, load stopped");
++	if (hz > ICE40_SLAVE_SCK_MAX_HZ)
++		throw std::runtime_error("SPI_SCK " + mhz(hz) + ": above the iCE40's "
++			"25 MHz maximum for a slave SPI configuration (DS-02008 Table 4.24), "
++			"load stopped");
++	return hz;
++}
++
++/* SRAM load as an SPI slave over any Ice40SpiSlaveInterface: TN-02001
++ * section 13.2 and Appendix A Table A.1, timings from DS-02008 Table 4.24.
++ * Throws std::runtime_error, saying what was done to give the board back,
++ * on any failure.
++ */
++void Ice40::program_cram_slave(const uint8_t *data, uint32_t length)
++{
++	/* CDONE must be high first: an iCE40 holding a design. If it is
++	 * already low, CDONE low under CRESET_B proves nothing, and the SPI
++	 * lines are not driven.
++	 */
++	if (!_slave->cdone())
++		throw std::runtime_error("CDONE is low before the reset: no configured "
++			"iCE40 is seen on these lines, so nothing was driven");
++
++	/* Table A.1 step 1: CRESET_B low for at least tCRESET_B; CDONE must
++	 * fall, or no iCE40 is held on that reset and the bus may be in use.
++	 */
++	_slave->hold_reset(true);
++	usleep(ICE40_CRESET_LOW_US);
++	if (_slave->cdone()) {
++		std::string why = "CDONE stayed high with CRESET_B held low: no iCE40 "
++			"is held on that reset, so the SPI lines were not driven";
++		try {
++			_slave->hold_reset(false);
++		} catch (std::exception &e) {
++			why += "; CRESET_B could not be let go: " + std::string(e.what());
++		}
++		throw std::runtime_error(why);
++	}
++
++	bool slave_mode = false;  // CRESET_B let go with SPI_SS low
++	try {
++		/* the iCE40 is in reset (its SPI pins released): the bus is ours */
++		_slave->take_bus();
++		_slave->set_ss(false);
++		usleep(ICE40_CRESET_LOW_US);
++		/* "The iCE40 FPGA enters SPI peripheral mode when the CRESET_B pin
++		 * returns High while the SPI_SS pin is Low" (13.2)
++		 */
++		_slave->hold_reset(false);
++		slave_mode = true;
++		usleep(ICE40_CR_SCK_US);
++
++		/* step 2: "toggle SPI_SS to high, send 8 dummy clocks, then
++		 * toggle it back to low"
++		 */
++		_slave->set_ss(true);
++		_slave->clocks(ICE40_SS_DUMMY_CLOCKS);
++		_slave->set_ss(false);
++
++		/* steps 3 and 4: the image, msb first, SPI_SS held low ("Hold
++		 * previous SPI_SS state, no toggle"), a continuous clock
++		 */
++		ProgressBar progress("Loading to CRAM", length, 50, _quiet);
++		double hz = 0;
++		std::chrono::steady_clock::time_point start =
++			std::chrono::steady_clock::now();
++		uint32_t size;
++		for (uint32_t addr = 0; addr < length; addr += size) {
++			size = (addr + ICE40_RATE_CHUNK > length) ?
++				(length - addr) : ICE40_RATE_CHUNK;
++			_slave->write(data + addr, size);
++			if (addr + size >= ICE40_RATE_FIRST || addr + size == length)
++				hz = check_rate(addr + size, start);
++			progress.display(addr + size);
++		}
++		progress.done();
++		printInfo("SPI_SCK " + mhz(hz) + " (mean over the image)");
++
++		/* step 5: 100 clocks; step 6: CDONE must be high. SPI_SS stays
++		 * low: Table A.1 does not toggle it (Figure 13.2 draws it high
++		 * here; openFPGALoader's FTDI load, iceprog and fomu-flash keep it
++		 * low, as Table A.1 reads)
++		 */
++		_slave->clocks(ICE40_POST_CLOCKS);
++		if (!_slave->cdone())
++			throw std::runtime_error("CDONE stayed low after the image and " +
++				std::to_string(ICE40_POST_CLOCKS) + " clocks: the iCE40 did not "
++				"accept the configuration");
++		/* step 7: at least 49 more clocks (tDONE_IO), then the SPI pins
++		 * are the design's I/O: the bus is given back at once
++		 */
++		_slave->clocks(ICE40_DONE_IO_CLOCKS);
++		_slave->set_ss(true);
++		_slave->release_bus();
++	} catch (std::exception &e) {
++		throw std::runtime_error(std::string(e.what()) + "; " +
++			recover_slave(slave_mode));
++	}
++	printSuccess("CDONE high: design loaded");
++}
++
++/* after a failure: the bus back to inputs; then CRESET_B let go only if
++ * none of the bus lines is still driven, so the iCE40 masters its flash
++ * alone when it boots. If the iCE40 had already left reset (slave mode),
++ * it is reset again so that it boots from its flash, as at power-up.
++ * Says what it did; never throws.
++ */
++std::string Ice40::recover_slave(bool slave_mode)
++{
++	try {
++		_slave->release_bus();
++	} catch (std::exception &e) {
++		return std::string("the SPI lines could not all be set back to "
++			"inputs (") + e.what() + "): " + (slave_mode ?
++			"CRESET_B had already been let go, the iCE40 is not reset again" :
++			"CRESET_B is left held low until the lines are given back");
++	}
++	try {
++		if (slave_mode) {
++			_slave->hold_reset(true);
++			usleep(ICE40_CRESET_LOW_US);
++		}
++		_slave->hold_reset(false);
++		for (int ms = 0; ms < ICE40_BOOT_WAIT_MS; ms += 10) {
++			if (_slave->cdone())
++				return "SPI lines released; the iCE40 was reset and booted "
++					"from its flash again (CDONE high)";
++			usleep(10000);
++		}
++	} catch (std::exception &e) {
++		return std::string("SPI lines released; resetting the iCE40 to boot "
++			"from its flash failed: ") + e.what();
++	}
++	return "SPI lines released; the iCE40 was reset but CDONE did not rise "
++		"within " + std::to_string(ICE40_BOOT_WAIT_MS / 1000) +
++		" s: it did not boot from its flash";
++}
++
++void Ice40::program_slave()
++{
++	if (_file_extension.empty())
++		throw std::runtime_error("no bitstream file");
++
++	RawParser bit(_filename, false);
++
++	printInfo("Parse file ", false);
++	if (bit.parse() != EXIT_SUCCESS) {
++		printError("FAIL");
++		throw std::runtime_error("unable to parse '" + _filename + "'");
++	}
++	printSuccess("DONE");
++
++	uint32_t length = bit.getLength() / 8;
++	if (length == 0)
++		throw std::runtime_error("'" + _filename + "' is empty");
++
++	program_cram_slave(bit.getData(), length);
++}
++
+ void Ice40::program(unsigned int offset, bool unprotect_flash)
+ {
++	if (_slave) {
++		program_slave();
++		return;
++	}
++
+ 	if (_file_extension.empty())
+ 		return;
+ 
+@@ -150,6 +383,8 @@ void Ice40::program(unsigned int offset, bool unprotect_flash)
+ 
+ bool Ice40::detect_flash(bool full_info)
+ {
++	if (!_spi)
++		return flash_access_unsupported();
+ 	/* prepare SPI access */
+ 	prepare_flash_access();
+ 	printInfo("Read Flash ", false);
+@@ -171,6 +406,8 @@ bool Ice40::detect_flash(bool full_info)
+ 
+ bool Ice40::dumpFlash(uint32_t base_addr, uint32_t len)
+ {
++	if (!_spi)
++		return flash_access_unsupported();
+ 	/* prepare SPI access */
+ 	prepare_flash_access();
+ 	printInfo("Read Flash ", false);
+@@ -191,6 +428,8 @@ bool Ice40::dumpFlash(uint32_t base_addr, uint32_t len)
+ 
+ bool Ice40::protect_flash(uint32_t len)
+ {
++	if (!_spi)
++		return flash_access_unsupported();
+ 	/* SPI access */
+ 	prepare_flash_access();
+ 	/* acess */
+@@ -211,6 +450,8 @@ bool Ice40::protect_flash(uint32_t len)
+ 
+ bool Ice40::unprotect_flash()
+ {
++	if (!_spi)
++		return flash_access_unsupported();
+ 	/* SPI access */
+ 	prepare_flash_access();
+ 	/* acess */
+@@ -231,6 +472,8 @@ bool Ice40::unprotect_flash()
+ 
+ bool Ice40::bulk_erase_flash()
+ {
++	if (!_spi)
++		return flash_access_unsupported();
+ 	/* SPI access */
+ 	prepare_flash_access();
+ 	/* acess */
+@@ -251,6 +494,8 @@ bool Ice40::bulk_erase_flash()
+ 
+ bool Ice40::prepare_flash_access()
+ {
++	if (!_spi)
++		return flash_access_unsupported();
+ 	/* SPI access: shutdown ICE40 */
+ 	_spi->gpio_clear(_rst_pin);
+ 	usleep(1000);
+@@ -259,6 +504,8 @@ bool Ice40::prepare_flash_access()
+ 
+ bool Ice40::post_flash_access()
+ {
++	if (!_spi)
++		return flash_access_unsupported();
+ 	reset();
+ 	return ((_spi->gpio_get(true) & _done_pin) == 0) ? false : true;
+ }
+diff --git a/src/ice40.hpp b/src/ice40.hpp
+index 6aec770..fd2c1cc 100644
+--- a/src/ice40.hpp
++++ b/src/ice40.hpp
+@@ -11,6 +11,7 @@
+ #include "device.hpp"
+ #include "ftdispi.hpp"
+ #include "spiInterface.hpp"
++#include "ice40SpiSlaveInterface.hpp"
+ 
+ class Ice40: public Device, SPIInterface {
+ 	public:
+@@ -19,10 +20,17 @@ class Ice40: public Device, SPIInterface {
+ 			Device::prog_type_t prg_type,
+ 			uint16_t rst_pin, uint16_t done_pin,
+ 			bool verify, int8_t verbose);
++		/*!
++		 * \brief SRAM load only, as an SPI slave, over any cable giving the
++		 *        lines of an Ice40SpiSlaveInterface (no flash access)
++		 */
++		Ice40(Ice40SpiSlaveInterface *slave, const std::string &filename,
++			const std::string &file_type, int8_t verbose);
+ 		~Ice40();
+ 
+ 		void program(unsigned int offset, bool unprotect_flash) override;
+ 		bool program_cram(const uint8_t *data, uint32_t length);
++		void program_cram_slave(const uint8_t *data, uint32_t length);
+ 		bool dumpFlash(uint32_t base_addr, uint32_t len) override;
+ 		bool detect_flash(bool full_info) override;
+ 		bool protect_flash(uint32_t len) override;
+@@ -58,7 +66,12 @@ class Ice40: public Device, SPIInterface {
+ 		bool post_flash_access() override;
+ 
+ 	private:
++		bool flash_access_unsupported();
++		void program_slave();
++		std::string recover_slave(bool slave_mode);
++
+ 		FtdiSpi *_spi;
++		Ice40SpiSlaveInterface *_slave;
+ 		uint16_t _rst_pin;
+ 		uint16_t _done_pin;
+ };
+diff --git a/src/ice40SpiSlaveInterface.hpp b/src/ice40SpiSlaveInterface.hpp
+new file mode 100644
+index 0000000..a6cd104
+--- /dev/null
++++ b/src/ice40SpiSlaveInterface.hpp
+@@ -0,0 +1,66 @@
++// SPDX-License-Identifier: Apache-2.0
++/*
++ * Copyright (C) 2026 Tim 'mithro' Ansell <me@mith.ro>
++ */
++
++#ifndef SRC_ICE40SPISLAVEINTERFACE_HPP_
++#define SRC_ICE40SPISLAVEINTERFACE_HPP_
++
++#include <cstdint>
++
++/*!
++ * \file ice40SpiSlaveInterface.hpp
++ * \class Ice40SpiSlaveInterface
++ * \brief the lines an iCE40 SPI slave (peripheral) configuration needs:
++ *        SPI_SS, SPI_SCK and SPI_SI driven by the host, CRESET_B driven
++ *        by the host and CDONE read back (TN-02001 section 13).
++ *
++ * The SRAM load built on it is Ice40::program_cram_slave(): this interface
++ * only moves lines, the procedure and its checks are the Ice40 class's.
++ * Every method throws std::runtime_error when a line cannot be moved or
++ * read: nothing is skipped.
++ */
++class Ice40SpiSlaveInterface {
++	public:
++		virtual ~Ice40SpiSlaveInterface() {}
++
++		/*!
++		 * \brief CRESET_B
++		 * \param[in] hold: true: driven low (the iCE40 in reset, its SPI
++		 *            pins released); false: let go (the board's pull-up
++		 *            takes it high)
++		 */
++		virtual void hold_reset(bool hold) = 0;
++		/*!
++		 * \brief CDONE level
++		 */
++		virtual bool cdone() = 0;
++		/*!
++		 * \brief take the SPI bus: SPI_SS high, SPI_SCK low, SPI_SI high,
++		 *        and whatever else shares the bus kept off it (a flash).
++		 *        Called only with the iCE40 held in reset.
++		 */
++		virtual void take_bus() = 0;
++		/*!
++		 * \brief every line take_bus() drove is an input again;
++		 *        throws (after trying them all) if one could not be
++		 */
++		virtual void release_bus() = 0;
++		/*!
++		 * \brief SPI_SS
++		 * \param[in] high: true: deselected; false: selected
++		 */
++		virtual void set_ss(bool high) = 0;
++		/*!
++		 * \brief send len bytes, most-significant bit first, SPI mode 0:
++		 *        SPI_SI changes while SPI_SCK is low, the iCE40 captures
++		 *        it on the rising edge (TN-02001 13.2)
++		 */
++		virtual void write(const uint8_t *data, uint32_t len) = 0;
++		/*!
++		 * \brief nclk SPI_SCK cycles with SPI_SI high (dummy bits)
++		 */
++		virtual void clocks(uint32_t nclk) = 0;
++};
++
++#endif  // SRC_ICE40SPISLAVEINTERFACE_HPP_
