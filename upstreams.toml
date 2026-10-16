@@ -29,12 +29,12 @@ upstream = "https://github.com/trabucayre/openFPGALoader.git"
 
 [openfpgaloader.stable]
 ref = "fpgas-online/v1.1.1"
-commit = "d275a30fbc04a680b5b0ab83d89f6fb3668e650c"
+commit = "97c94b622e4c656ca5f2324f527f9b90a3f10db7"
 describe = "v1.1.1"
 
 [openfpgaloader.master]
 ref = "fpgas-online/master"
-commit = "e867310a6507940f14663ac790ccfd16b12bdd93"
+commit = "df0e515ee8f5065251b1071b0a996f71ce9e2e5a"
 describe = "v1.1.1-182-gbf2b529"
 date = "2026-10-05"
 
