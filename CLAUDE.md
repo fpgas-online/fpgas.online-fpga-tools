@@ -48,8 +48,9 @@ shellcheck packaging/**/*.sh
 openFPGALoader has none: a change is made on its feature branch in
 mithro/openFPGALoader (one to three upstream-quality patches on upstream
 master, plus a backport on the latest release), the integration branches are
-rebuilt there, and the daily bump moves the pins. `fpgatools apply`,
-`export` and `compare` refuse a series for a forked tool.
+rebuilt there (procedure: the fork's `fpgas-online/restack` branch), and the
+daily bump moves the pins. `fpgatools apply`, `export` and `compare` refuse a
+series for a forked tool.
 
 For OpenOCD, never edit a `.patch` file by hand. The series is the export of a git branch:
 

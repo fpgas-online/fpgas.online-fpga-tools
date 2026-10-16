@@ -229,7 +229,10 @@ docs/superpowers/         design spec and implementation plan
 openFPGALoader changes are made in
 [mithro/openFPGALoader](https://github.com/mithro/openFPGALoader): on the
 feature branch (and its backport), then the integration branches are rebuilt;
-the daily bump picks the new heads up. Nothing here changes for them.
+the daily bump picks the new heads up. Nothing here changes for them. The
+procedure (rebasing on upstream, a new upstream release, adding a feature) is
+on the fork's [`fpgas-online/restack`](https://github.com/mithro/openFPGALoader/tree/fpgas-online/restack)
+branch.
 
 OpenOCD: never edit a `.patch` by hand; each series is the export of a git branch.
 

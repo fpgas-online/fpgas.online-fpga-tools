@@ -19,7 +19,10 @@
 # latest release (each branch's README lists the features). The build checks
 # out the pinned fork commit as it is: there is no patch series here.
 # `fpgatools bump` moves each pin to its branch head; `describe` is the
-# upstream commit (master) or release tag (stable) the branch is built on.
+# upstream commit (master) or release tag (stable) the branch is built on,
+# and master's `date` is that upstream commit's date. How the fork's
+# branches are rebased and rebuilt:
+# https://github.com/mithro/openFPGALoader/tree/fpgas-online/restack
 [openfpgaloader]
 url = "https://github.com/mithro/openFPGALoader.git"
 upstream = "https://github.com/trabucayre/openFPGALoader.git"

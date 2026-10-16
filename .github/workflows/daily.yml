@@ -185,7 +185,9 @@ jobs:
             echo
             echo "The pins on main are untouched: nothing is published from a red run."
             echo "Reproduce a series failure locally with \`uv run fpgatools bump --dry-run\`,"
-            echo "then rebase it (see CLAUDE.md, \"Working on the patch series\")."
+            echo "then rebase it (see CLAUDE.md, \"Working on the patch series\"). A RESTACK"
+            echo "line for openFPGALoader means the fork's integration branches need"
+            echo "rebuilding: https://github.com/mithro/openFPGALoader/tree/fpgas-online/restack"
             if [ -f report/bump.md ]; then
               echo
               echo "<details><summary>Bump report</summary>"
