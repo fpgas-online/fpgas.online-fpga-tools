@@ -71,6 +71,6 @@ describe = "v0.0-107-g6f50b13"
 [piolib]
 url = "https://github.com/raspberrypi/utils.git"
 ref = "master"
-commit = "7d644432cdb26073411b71021aab9f926f99c563"
-date = "2026-10-14"
+commit = "b57c48e97f7f43d95d86334798650cfda1ebc8a1"
+date = "2026-10-16"
 subdir = "piolib"
